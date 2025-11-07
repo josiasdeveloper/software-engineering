@@ -18,8 +18,8 @@ The analysis runs in three phases:
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/code-analysis.git
-cd code-analysis
+git clone https://github.com/josiasdeveloper/software-engineering.git
+cd software-engineering/code-analysis
 
 # Install in editable mode
 pip install -e .
@@ -29,10 +29,11 @@ pip install -e .
 
 ### Option 1: Using the Notebook (Recommended)
 
-1. Go to [Google Colab](https://colab.research.google.com/)
-2. File → Upload notebook → Select `colab_analysis.ipynb`
-3. Runtime → Change runtime type → **T4 GPU**
-4. Run all cells
+1. Download `colab_analysis.ipynb` from the repository
+2. Go to [Google Colab](https://colab.research.google.com/)
+3. File → Upload notebook → Select `colab_analysis.ipynb`
+4. Runtime → Change runtime type → **T4 GPU**
+5. Run all cells (or use Runtime → Run all)
 
 ### Option 2: Manual Setup
 
@@ -56,7 +57,7 @@ pip install -e .
 # Step 6: Generate summaries
 !analyze index
 
-# Step 7: View results
+# Step 6: View results
 import json
 with open('summaries.json', 'r') as f:
     summaries = json.load(f)
@@ -65,7 +66,7 @@ print(f"Total files: {len(summaries)}")
 for path, summary in list(summaries.items())[:3]:
     print(f"{path}: {summary}")
 
-# Step 8: Download results
+# Step 7: Download results
 from google.colab import files
 files.download('summaries.json')
 ```

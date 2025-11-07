@@ -70,7 +70,7 @@ def clone(repository_url, target_dir):
 @cli.command()
 @click.option('--target-dir', default='./target_repo', help='Directory containing cloned repository')
 def index(target_dir):
-    """Generate file summaries using the loaded model."""
+    """Generate file summaries (loads model automatically if needed)."""
     
     print_section("PHASE 2: Generate File Summaries (Indexer)")
     
@@ -86,6 +86,9 @@ def index(target_dir):
         return
     
     click.echo(f"Found {len(analyzer.source_files)} source files")
+    
+    click.echo("\nLoading model (if not already loaded)...")
+    analyzer.phase_1_load_model()
     
     summaries_path = analyzer.phase_2_generate_summaries()
     

@@ -31,8 +31,8 @@ If you prefer to work directly in a new notebook:
 !nvidia-smi
 
 # Cell 2: Clone the analyzer
-!git clone https://github.com/your-username/code-analysis.git
-%cd code-analysis
+!git clone https://github.com/josiasdeveloper/software-engineering.git
+%cd software-engineering/code-analysis
 
 # Cell 3: Install dependencies
 !pip install -e . -q
