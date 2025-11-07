@@ -27,17 +27,49 @@ pip install -e .
 
 ## Usage in Google Colab
 
+### Option 1: Using the Notebook (Recommended)
+
+1. Go to [Google Colab](https://colab.research.google.com/)
+2. File → Upload notebook → Select `colab_analysis.ipynb`
+3. Runtime → Change runtime type → **T4 GPU**
+4. Run all cells
+
+### Option 2: Manual Setup
+
 ```python
-# Clone this repository
+# Step 1: Check GPU
+!nvidia-smi
+
+# Step 2: Clone this repository
 !git clone https://github.com/your-username/code-analysis.git
 %cd code-analysis
 
-# Install the package
-!pip install -e .
+# Step 3: Install the package
+!pip install -e . -q
 
-# Run analysis on target repository
-!analyze analyze https://github.com/pallets/flask.git
+# Step 4: Run analysis (replace URL with your target repo)
+!analyze analyze https://github.com/vanna-ai/vanna.git --keep-summaries
+
+# Step 5: View results
+import json
+with open('summaries.json', 'r') as f:
+    summaries = json.load(f)
+    
+print(f"Total files: {len(summaries)}")
+for path, summary in list(summaries.items())[:3]:
+    print(f"{path}: {summary}")
+
+# Step 6: Download results
+from google.colab import files
+files.download('summaries.json')
 ```
+
+### Important: GPU Setup
+
+**You MUST enable GPU in Colab:**
+- Click "Runtime" → "Change runtime type"
+- Select "T4 GPU" as Hardware accelerator
+- Click "Save"
 
 ## Local Usage
 
