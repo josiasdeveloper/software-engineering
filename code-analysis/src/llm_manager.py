@@ -4,42 +4,58 @@ from config import MODEL_NAME, MAX_CONTEXT_TOKENS
 
 
 class LLMManager:
-    def __init__(self):
-        self.model = None
-        self.tokenizer = None
-        self.device = None
+    _instance = None
+    _model = None
+    _tokenizer = None
+    _device = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(LLMManager, cls).__new__(cls)
+        return cls._instance
+    
+    @property
+    def model(self):
+        return self._model
+    
+    @property
+    def tokenizer(self):
+        return self._tokenizer
+    
+    @property
+    def device(self):
+        return self._device
+    
+    def is_loaded(self):
+        return self._model is not None
     
     def load_model(self):
-        if self.model is not None:
+        if self._model is not None:
+            print("Model already loaded")
             return
         
-        
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self._device = "cuda" if torch.cuda.is_available() else "cpu"
         
         print(f"Loading model: {MODEL_NAME}")
-        print(f"Device: {self.device}")
+        print(f"Device: {self._device}")
         
-        
-        if self.device == "cpu":
+        if self._device == "cpu":
             print("ERROR: No GPU (cuda) detected.")
-            print("This model (13.4GB) is too large to run on Colab's CPU/System RAM.")
-            print("Please go to 'Runtime -> Disconnect and delete runtime' and try again.")
+            print("This model requires GPU to run efficiently.")
+            print("In Colab: Runtime -> Change runtime type -> T4 GPU")
             raise Exception("No CUDA device found")
-            
         
-        self.tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
-        
-
-        self.model = AutoModelForCausalLM.from_pretrained(
+        self._tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
+        self._model = AutoModelForCausalLM.from_pretrained(
             MODEL_NAME,
             trust_remote_code=True,
-            torch_dtype=torch.float16,  # On GPU, always float16
-            device_map="auto"       # To avoid loading the model on the CPU first
+            torch_dtype=torch.float16,
+            device_map="auto"
         )
         
-        self.model.eval()
+        self._model.eval()
         
-        print("Model loaded successfully (directly onto GPU)")
+        print("Model loaded successfully")
     
     def generate(self, prompt, max_new_tokens=256):
         if self._model is None:
@@ -75,4 +91,3 @@ class LLMManager:
             self._tokenizer = None
             self._device = None
             print("Model unloaded")
-
