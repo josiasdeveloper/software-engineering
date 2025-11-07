@@ -57,8 +57,6 @@ class LLMManager:
         print("Model loaded successfully")
     
     def generate(self, prompt, max_new_tokens=256):
-        if self._model is None:
-            raise RuntimeError("Model not loaded. Call load_model() first.")
         
         inputs = self._tokenizer(prompt, return_tensors="pt", truncation=True, max_length=MAX_CONTEXT_TOKENS)
         inputs = {k: v.to(self._device) for k, v in inputs.items()}
