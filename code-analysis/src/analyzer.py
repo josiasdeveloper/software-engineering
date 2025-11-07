@@ -32,15 +32,11 @@ class PatternAnalyzer:
         return self.repo_path
     
     def phase_1_load_model(self):
-        if not self.llm_manager.is_loaded():
-            self.llm_manager.load_model()
+        self.llm_manager.load_model()
     
     def phase_2_generate_summaries(self):
         if self.repo_path is None:
             raise RuntimeError("Repository not cloned. Run phase_0_clone_and_map() first.")
-        
-        if not self.llm_manager.is_loaded():
-            raise RuntimeError("Model not loaded. Run phase_1_load_model() first.")
         
         print(f"\nGenerating summaries for {len(self.source_files)} files...")
         

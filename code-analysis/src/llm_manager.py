@@ -31,7 +31,6 @@ class LLMManager:
     
     def load_model(self):
         if self._model is not None:
-            print("Model already loaded")
             return
         
         self._device = "cuda" if torch.cuda.is_available() else "cpu"

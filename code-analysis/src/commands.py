@@ -35,14 +35,9 @@ def load_model(model):
     click.echo(f"Model: {MODEL_NAME}")
     
     llm_manager = LLMManager()
+    llm_manager.load_model()
     
-    if llm_manager.is_loaded():
-        click.echo("\nModel is already loaded!")
-    else:
-        llm_manager.load_model()
-        click.echo("\nModel loaded successfully!")
-    
-    click.echo("The model will remain in memory until you unload it or restart.")
+    click.echo("\nModel loaded successfully!")
     click.echo("\nNext steps:")
     click.echo("  1. Run 'analyze clone <repo-url>' to clone and map a repository")
     click.echo("  2. Run 'analyze index' to generate summaries")
@@ -77,15 +72,6 @@ def clone(repository_url, target_dir):
 def index(target_dir):
     """Generate file summaries using the loaded model."""
     
-    from llm_manager import LLMManager
-    
-    llm_manager = LLMManager()
-    
-    if not llm_manager.is_loaded():
-        click.echo("Error: Model not loaded!")
-        click.echo("Please run 'analyze load-model' first.")
-        return
-    
     print_section("PHASE 2: Generate File Summaries (Indexer)")
     
     analyzer = PatternAnalyzer(target_dir)
@@ -111,9 +97,8 @@ def index(target_dir):
 @click.option('--keep-repo', is_flag=True, help='Keep cloned repository after analysis')
 @click.option('--keep-summaries', is_flag=True, help='Keep generated summaries JSON')
 @click.option('--target-dir', default='./target_repo', help='Directory to clone repository into')
-@click.option('--skip-summaries', is_flag=True, help='Skip summary generation (faster, for testing)')
-def analyze(repository_url, keep_repo, keep_summaries, target_dir, skip_summaries):
-    """Full analysis pipeline: clone, load model, and generate summaries."""
+def analyze(repository_url, keep_repo, keep_summaries, target_dir):
+    """Full analysis pipeline: clone and generate summaries (requires model loaded)."""
     
     analyzer = PatternAnalyzer(target_dir)
     
@@ -131,24 +116,18 @@ def analyze(repository_url, keep_repo, keep_summaries, target_dir, skip_summarie
             for doc_path in analyzer.doc_files.keys():
                 click.echo(f"  - {doc_path}")
         
-        if not skip_summaries:
-            print_section("PHASE 1: Load Language Model")
-            analyzer.phase_1_load_model()
-            
-            print_section("PHASE 2: Generate File Summaries (Indexer)")
-            summaries_path = analyzer.phase_2_generate_summaries()
-            click.echo(f"\nIndexing complete! Summaries saved to: {summaries_path}")
-            
-            print_section("PHASE 3: Documentation Analysis (Not Implemented)")
-            click.echo("Agent 1 will analyze documentation for architectural patterns.")
-            
-            print_section("PHASE 4: Code Investigation (Not Implemented)")
-            click.echo("Agent 2 will investigate code using RAG.")
-            
-            print_section("PHASE 5: Evidence Collection (Not Implemented)")
-            click.echo("Agent 3 will collect code evidence for detected patterns.")
-        else:
-            click.echo("\nSkipping summary generation (--skip-summaries flag set)")
+        print_section("PHASE 2: Generate File Summaries (Indexer)")
+        summaries_path = analyzer.phase_2_generate_summaries()
+        click.echo(f"\nIndexing complete! Summaries saved to: {summaries_path}")
+        
+        print_section("PHASE 3: Documentation Analysis (Not Implemented)")
+        click.echo("Agent 1 will analyze documentation for architectural patterns.")
+        
+        print_section("PHASE 4: Code Investigation (Not Implemented)")
+        click.echo("Agent 2 will investigate code using RAG.")
+        
+        print_section("PHASE 5: Evidence Collection (Not Implemented)")
+        click.echo("Agent 3 will collect code evidence for detected patterns.")
         
     finally:
         analyzer.cleanup(keep_summaries=keep_summaries)
