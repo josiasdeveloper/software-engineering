@@ -18,13 +18,102 @@ def cli():
 
 
 @cli.command()
+@click.option('--model', help='Model name (overrides LLM_MODEL env var)')
+def load_model(model):
+    """Load the LLM model into memory (GPU/CPU)."""
+    
+    print_section("Loading Language Model")
+    
+    from llm_manager import LLMManager
+    import os
+    
+    if model:
+        os.environ['LLM_MODEL'] = model
+        click.echo(f"Using custom model: {model}")
+    
+    from config import MODEL_NAME
+    click.echo(f"Model: {MODEL_NAME}")
+    
+    llm_manager = LLMManager()
+    
+    if llm_manager.is_loaded():
+        click.echo("\nModel is already loaded!")
+    else:
+        llm_manager.load_model()
+        click.echo("\nModel loaded successfully!")
+    
+    click.echo("The model will remain in memory until you unload it or restart.")
+    click.echo("\nNext steps:")
+    click.echo("  1. Run 'analyze clone <repo-url>' to clone and map a repository")
+    click.echo("  2. Run 'analyze index' to generate summaries")
+
+
+@cli.command()
+@click.argument('repository_url')
+@click.option('--target-dir', default='./target_repo', help='Directory to clone repository into')
+def clone(repository_url, target_dir):
+    """Clone repository and generate directory tree."""
+    
+    print_section("PHASE 0: Clone and Map Repository")
+    
+    analyzer = PatternAnalyzer(target_dir)
+    
+    repo_path = analyzer.phase_0_clone_and_map(repository_url)
+    click.echo(f"Repository cloned to: {repo_path}")
+    
+    click.echo(f"\nDirectory structure ({len(analyzer.source_files)} source files found):\n")
+    click.echo(analyzer.directory_tree)
+    
+    if analyzer.doc_files:
+        click.echo(f"\nFound {len(analyzer.doc_files)} documentation file(s):")
+        for doc_path in analyzer.doc_files.keys():
+            click.echo(f"  - {doc_path}")
+    
+    click.echo(f"\nRepository ready for analysis at: {repo_path}")
+
+
+@cli.command()
+@click.option('--target-dir', default='./target_repo', help='Directory containing cloned repository')
+def index(target_dir):
+    """Generate file summaries using the loaded model."""
+    
+    from llm_manager import LLMManager
+    
+    llm_manager = LLMManager()
+    
+    if not llm_manager.is_loaded():
+        click.echo("Error: Model not loaded!")
+        click.echo("Please run 'analyze load-model' first.")
+        return
+    
+    print_section("PHASE 2: Generate File Summaries (Indexer)")
+    
+    analyzer = PatternAnalyzer(target_dir)
+    
+    click.echo("Loading repository information...")
+    tree_builder = DirectoryTreeBuilder(analyzer.repo_manager.target_dir)
+    analyzer.directory_tree, analyzer.source_files = tree_builder.build()
+    analyzer.repo_path = analyzer.repo_manager.target_dir
+    
+    if not analyzer.source_files:
+        click.echo("Error: No source files found. Did you run 'analyze clone' first?")
+        return
+    
+    click.echo(f"Found {len(analyzer.source_files)} source files")
+    
+    summaries_path = analyzer.phase_2_generate_summaries()
+    
+    click.echo(f"\nIndexing complete! Summaries saved to: {summaries_path}")
+
+
+@cli.command()
 @click.argument('repository_url')
 @click.option('--keep-repo', is_flag=True, help='Keep cloned repository after analysis')
 @click.option('--keep-summaries', is_flag=True, help='Keep generated summaries JSON')
 @click.option('--target-dir', default='./target_repo', help='Directory to clone repository into')
 @click.option('--skip-summaries', is_flag=True, help='Skip summary generation (faster, for testing)')
 def analyze(repository_url, keep_repo, keep_summaries, target_dir, skip_summaries):
-    """Analyze a repository to detect design patterns."""
+    """Full analysis pipeline: clone, load model, and generate summaries."""
     
     analyzer = PatternAnalyzer(target_dir)
     

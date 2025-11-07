@@ -1,3 +1,5 @@
+import os
+
 SUPPORTED_EXTENSIONS = {'.py', '.java', '.js', '.ts', '.cpp', '.c', '.h', '.cs', '.go', '.rb'}
 
 IGNORE_DIRS = {
@@ -14,7 +16,7 @@ IGNORE_DIRS = {
     'target'
 }
 
-MODEL_NAME = "deepseek-ai/deepseek-coder-6.7b-instruct"
+MODEL_NAME = os.getenv("LLM_MODEL", "deepseek-ai/deepseek-coder-6.7b-instruct")
 MAX_CONTEXT_TOKENS = 16000
 MAX_FILE_SIZE_BYTES = 100000
 SUMMARIES_FILE = "summaries.json"

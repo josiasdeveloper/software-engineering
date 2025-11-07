@@ -1,4 +1,4 @@
-.PHONY: help venv install clean test analyze tree
+.PHONY: help venv install clean test analyze tree clone index load-model
 
 PYTHON := python3
 VENV := .venv
@@ -12,9 +12,16 @@ help:
 	@echo "  make install       - Create venv and install package in editable mode"
 	@echo "  make clean         - Remove cloned repositories and cache"
 	@echo "  make clean-all     - Remove everything including venv"
-	@echo "  make analyze URL=<repo-url> - Analyze a repository"
+	@echo ""
+	@echo "Analysis commands:"
+	@echo "  make load-model    - Load LLM model into memory"
+	@echo "  make clone URL=<repo-url> - Clone and map repository"
+	@echo "  make index         - Generate summaries for cloned repository"
+	@echo "  make analyze URL=<repo-url> - Full pipeline (clone + index)"
+	@echo ""
+	@echo "Utility commands:"
 	@echo "  make tree DIR=<path> - Generate tree for local directory"
-	@echo "  make test          - Run analysis on a small test repository"
+	@echo "  make test          - Run test analysis"
 
 venv:
 	@if [ ! -d "$(VENV)" ]; then \
@@ -37,6 +44,31 @@ clean:
 clean-all: clean
 	rm -rf $(VENV)
 	rm -rf *.egg-info
+
+load-model:
+	@if [ ! -d "$(VENV)" ]; then \
+		echo "Virtual environment not found. Run 'make install' first."; \
+		exit 1; \
+	fi
+	$(ANALYZE) load-model
+
+clone:
+	@if [ ! -d "$(VENV)" ]; then \
+		echo "Virtual environment not found. Run 'make install' first."; \
+		exit 1; \
+	fi
+	@if [ -z "$(URL)" ]; then \
+		echo "Error: URL parameter required. Usage: make clone URL=<repo-url>"; \
+		exit 1; \
+	fi
+	$(ANALYZE) clone $(URL)
+
+index:
+	@if [ ! -d "$(VENV)" ]; then \
+		echo "Virtual environment not found. Run 'make install' first."; \
+		exit 1; \
+	fi
+	$(ANALYZE) index
 
 analyze:
 	@if [ ! -d "$(VENV)" ]; then \

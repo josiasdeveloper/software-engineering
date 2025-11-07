@@ -47,10 +47,16 @@ pip install -e .
 # Step 3: Install the package
 !pip install -e . -q
 
-# Step 4: Run analysis (replace URL with your target repo)
-!analyze analyze https://github.com/vanna-ai/vanna.git --keep-summaries
+# Step 4: Load model (IMPORTANT - do this once)
+!analyze load-model
 
-# Step 5: View results
+# Step 5: Clone target repository
+!analyze clone https://github.com/vanna-ai/vanna.git
+
+# Step 6: Generate summaries
+!analyze index
+
+# Step 7: View results
 import json
 with open('summaries.json', 'r') as f:
     summaries = json.load(f)
@@ -59,9 +65,20 @@ print(f"Total files: {len(summaries)}")
 for path, summary in list(summaries.items())[:3]:
     print(f"{path}: {summary}")
 
-# Step 6: Download results
+# Step 8: Download results
 from google.colab import files
 files.download('summaries.json')
+```
+
+### Using a Different Model
+
+```bash
+# Set via environment variable
+export LLM_MODEL="microsoft/phi-2"
+analyze load-model
+
+# Or pass directly
+analyze load-model --model microsoft/phi-2
 ```
 
 ### Important: GPU Setup
