@@ -119,19 +119,38 @@ def analyze(repository_url, keep_repo, keep_summaries, target_dir):
             for doc_path in analyzer.doc_files.keys():
                 click.echo(f"  - {doc_path}")
         
+        print_section("PHASE 1: Load Model")
+        click.echo("Loading model...")
+        analyzer.phase_1_load_model()
+        
         print_section("PHASE 2: Generate File Summaries (Indexer)")
         summaries_path = analyzer.phase_2_generate_summaries()
         click.echo(f"\nIndexing complete! Summaries saved to: {summaries_path}")
         
-        print_section("PHASE 3: Documentation Analysis (Not Implemented)")
-        click.echo("Agent 1 will analyze documentation for architectural patterns.")
+        print_section("PHASE 3: Documentation Analysis")
+        doc_patterns = analyzer.phase_3_analyze_documentation()
         
-        print_section("PHASE 4: Code Investigation (Not Implemented)")
-        click.echo("Agent 2 will investigate code using RAG.")
+        print_section("PHASE 4: Code Investigation")
+        code_patterns = analyzer.phase_4_investigate_code()
         
-        print_section("PHASE 5: Evidence Collection (Not Implemented)")
-        click.echo("Agent 3 will collect code evidence for detected patterns.")
+        print_section("PHASE 5: Evidence Collection")
+        evidence, evidence_path = analyzer.phase_5_collect_evidence(doc_patterns, code_patterns)
         
+        click.echo(f"\nAnalysis complete! Results saved to: {evidence_path}")
+        
+        # Show summary
+        patterns_found = evidence["analysis_summary"]["patterns_detected"]
+        if patterns_found:
+            click.echo(f"\nPatterns detected: {len(patterns_found)}")
+            for pattern, info in patterns_found.items():
+                click.echo(f"  - {pattern}: {info['mentions']} mentions")
+        else:
+            click.echo("\nNo clear patterns detected in this analysis.")
+        
+    except Exception as e:
+        click.echo(f"\nError during analysis: {str(e)}")
+        analyzer.cleanup(keep_summaries=keep_summaries)
+        raise
     finally:
         analyzer.cleanup(keep_summaries=keep_summaries)
         

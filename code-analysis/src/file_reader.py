@@ -3,12 +3,12 @@ from pathlib import Path
 
 class FileReader:
     @staticmethod
-    def read_source_file(file_path):
+    def read_source_file(file_path: Path) -> str:
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                 return f.read()
-        except (UnicodeDecodeError, PermissionError):
-            return None
+        except Exception as e:
+            return f"Erro ao ler arquivo: {str(e)}"
     
     @staticmethod
     def find_documentation_files(root_path):

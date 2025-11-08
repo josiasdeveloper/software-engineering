@@ -2,7 +2,6 @@ import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from config import MODEL_NAME, MAX_CONTEXT_TOKENS
 
-
 class LLMManager:
     _instance = None
     _model = None
@@ -14,18 +13,6 @@ class LLMManager:
             cls._instance = super(LLMManager, cls).__new__(cls)
         return cls._instance
     
-    @property
-    def model(self):
-        return self._model
-    
-    @property
-    def tokenizer(self):
-        return self._tokenizer
-    
-    @property
-    def device(self):
-        return self._device
-    
     def is_loaded(self):
         return self._model is not None
     
@@ -35,56 +22,98 @@ class LLMManager:
         
         self._device = "cuda" if torch.cuda.is_available() else "cpu"
         
-        print(f"Loading model: {MODEL_NAME}")
+        print(f"Carregando modelo: {MODEL_NAME}")
         print(f"Device: {self._device}")
         
-        if self._device == "cpu":
-            print("ERROR: No GPU (cuda) detected.")
-            print("This model requires GPU to run efficiently.")
-            print("In Colab: Runtime -> Change runtime type -> T4 GPU")
-            raise Exception("No CUDA device found")
-        
-        self._tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
-        self._model = AutoModelForCausalLM.from_pretrained(
-            MODEL_NAME,
-            trust_remote_code=True,
-            torch_dtype=torch.float16,
-            device_map="auto"
-        )
-        
-        self._model.eval()
-        
-        print("Model loaded successfully")
-    
-    def generate(self, prompt, max_new_tokens=256):
-        
-        inputs = self._tokenizer(prompt, return_tensors="pt", truncation=True, max_length=MAX_CONTEXT_TOKENS)
-        inputs = {k: v.to(self._device) for k, v in inputs.items()}
-        
-        with torch.no_grad():
-            outputs = self._model.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                do_sample=False,
-                temperature=None,
-                top_p=None,
-                repetition_penalty=1.2,
-                pad_token_id=self._tokenizer.eos_token_id
+        try:
+            # Carregar tokenizer
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                MODEL_NAME,
+                trust_remote_code=True
             )
+            
+            # Configurar padding token
+            if self._tokenizer.pad_token is None:
+                self._tokenizer.pad_token = self._tokenizer.eos_token
+            
+            # Carregar modelo
+            self._model = AutoModelForCausalLM.from_pretrained(
+                MODEL_NAME,
+                trust_remote_code=True,
+                torch_dtype=torch.float32,
+                low_cpu_mem_usage=True
+            )
+            
+            self._model = self._model.to(self._device)
+            self._model.eval()
+            print("Modelo carregado com sucesso!")
+            
+        except Exception as e:
+            print(f"Erro ao carregar modelo: {e}")
+            self._load_fallback()
+    
+    def _load_fallback(self):
+        """Fallback para modelo de código mais simples"""
+        try:
+            print("Usando fallback: codeparrot/codeparrot-small")
+            self._tokenizer = AutoTokenizer.from_pretrained("codeparrot/codeparrot-small")
+            self._tokenizer.pad_token = self._tokenizer.eos_token
+            
+            self._model = AutoModelForCausalLM.from_pretrained(
+                "codeparrot/codeparrot-small",
+                torch_dtype=torch.float32,
+                low_cpu_mem_usage=True
+            )
+            self._model = self._model.to(self._device)
+            self._model.eval()
+            print("Fallback codeparrot carregado!")
+        except Exception as e:
+            print(f"Erro no fallback: {e}")
+            raise
+    
+    def generate(self, prompt, max_new_tokens=400):
+        if not self.is_loaded():
+            self.load_model()
         
-        generated_text = self._tokenizer.decode(outputs[0], skip_special_tokens=True)
-        
-        response = generated_text[len(prompt):].strip()
-        
-        return response
+        try:
+            # Tokenização simples
+            inputs = self._tokenizer.encode(prompt, return_tensors="pt")
+            inputs = inputs.to(self._device)
+            
+            # Geração com parâmetros otimizados para análise
+            with torch.no_grad():
+                outputs = self._model.generate(
+                    inputs,
+                    max_new_tokens=max_new_tokens,
+                    do_sample=True,
+                    temperature=0.3,  # Mais baixo para análise mais consistente
+                    top_p=0.9,
+                    repetition_penalty=1.1,
+                    pad_token_id=self._tokenizer.eos_token_id,
+                    eos_token_id=self._tokenizer.eos_token_id,
+                    early_stopping=True
+                )
+            
+            # Decodificar resposta
+            response = self._tokenizer.decode(outputs[0], skip_special_tokens=True)
+            response = response[len(prompt):].strip()
+            
+            # Limpar resposta
+            if not response:
+                response = "No patterns identified."
+                
+            return response
+            
+        except Exception as e:
+            return f"Generation error: {str(e)}"
     
     def unload_model(self):
         if self._model is not None:
             del self._model
-            del self._tokenizer
-            if self._device == "cuda":
+            if self._tokenizer:
+                del self._tokenizer
+            if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             self._model = None
             self._tokenizer = None
-            self._device = None
-            print("Model unloaded")
+            print("Modelo descarregado")

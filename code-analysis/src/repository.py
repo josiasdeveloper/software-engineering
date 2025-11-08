@@ -10,7 +10,7 @@ class RepositoryManager:
     
     def clone(self, repo_url):
         if self.target_dir.exists():
-            shutil.rmtree(self.target_dir)
+            self._force_remove_directory(self.target_dir)
         
         self.target_dir.mkdir(parents=True, exist_ok=True)
         
@@ -24,5 +24,16 @@ class RepositoryManager:
     
     def cleanup(self):
         if self.target_dir.exists():
-            shutil.rmtree(self.target_dir)
+            self._force_remove_directory(self.target_dir)
+    
+    def _force_remove_directory(self, path):
+        """Force remove directory on Windows with read-only files"""
+        import stat
+        
+        def handle_remove_readonly(func, path, exc):
+            if os.path.exists(path):
+                os.chmod(path, stat.S_IWRITE)
+                func(path)
+        
+        shutil.rmtree(path, onerror=handle_remove_readonly)
 
