@@ -146,17 +146,21 @@ class Orchestrator:
         self.llm_manager._tokenizer = None
         print("Model and conversation restarted. Model will reload on next message.")
     
-    def save_history(self, filepath: str) -> str:
+    def save_history(self, filepath: str = None) -> str:
         """
         Save conversation history to a text file.
         
         Args:
-            filepath: Path to save the history
+            filepath: Path to save the history (default: auto-generated with timestamp)
             
         Returns:
             Confirmation message with filepath
         """
         from datetime import datetime
+        
+        if filepath is None:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filepath = f"conversation_{timestamp}.txt"
         
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write("="*70 + "\n")

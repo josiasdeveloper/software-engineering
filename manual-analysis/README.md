@@ -58,13 +58,15 @@ chat
 
 ### Option 2: Jupyter Notebook
 
-Open `pattern_analysis.ipynb` and run the cells:
+Open `run.ipynb` and run the cells:
 
 1. **Configuration**: Set model via environment variable
-2. **Setup Repository**: Clone/pull repository
-3. **Run Chat**: Start interactive chat session
+2. **Clone/Update**: Clone or pull repository
+3. **Install**: Install dependencies with `pip install -e .`
+4. **Chat**: Start interactive chat with `!chat`
+5. **Download**: Download conversation history (auto-detects Colab)
 
-The notebook provides a simple 3-cell interface for quick setup and usage.
+The notebook provides a simple 5-cell interface optimized for Google Colab.
 
 ### Available Commands
 
@@ -73,18 +75,15 @@ Once in the chat, you can use these commands:
 - `/help` - Show help message
 - `/clear` - Clear conversation history (keeps model loaded)
 - `/restart` - Restart model and clear all context (frees GPU memory)
-- `/save [path]` - Save conversation history to text file
+- `/save` - Save conversation with auto-generated timestamp filename
 - `/context` - Display current context usage (tokens, messages)
 - `/exit` - Exit the assistant
 
 ### Command Examples
 
 ```bash
-# Save conversation with auto-generated filename
+# Save conversation (auto-generates: conversation_20240315_143022.txt)
 /save
-
-# Save to specific path
-/save my_analysis_2024.txt
 
 # Check context usage
 /context
@@ -95,6 +94,17 @@ Once in the chat, you can use these commands:
 # Free GPU memory completely
 /restart
 ```
+
+### Notebook Usage
+
+In `run.ipynb`:
+1. Run chat and use `/save` command (can save multiple times)
+2. Exit chat with `/exit`
+3. Run the download cell to get ALL conversation files
+
+Each `/save` creates a new file with timestamp. The download cell automatically finds and downloads all `conversation_*.txt` files.
+
+**Multiple iterations supported**: Chat → Save → Exit → Chat again → Save → Download all!
 
 ### Tips for Best Results
 

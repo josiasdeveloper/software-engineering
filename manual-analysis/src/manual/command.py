@@ -11,7 +11,7 @@ def print_banner():
     print("  /help         - Show this help message")
     print("  /clear        - Clear conversation history")
     print("  /restart      - Restart model and clear all context")
-    print("  /save [path]  - Save conversation history to file")
+    print("  /save         - Save conversation history to file")
     print("  /context      - Show context usage information")
     print("  /exit         - Exit the assistant")
     print("\nStart analyzing your codebase by pasting code snippets,")
@@ -25,7 +25,7 @@ def print_help():
     print("  /help         - Show this help message")
     print("  /clear        - Clear conversation history (keeps model loaded)")
     print("  /restart      - Restart model and clear all context")
-    print("  /save [path]  - Save conversation history to file")
+    print("  /save         - Save conversation history to file")
     print("  /context      - Display current context usage (tokens, messages)")
     print("  /exit         - Exit the assistant")
     print("\nTips:")
@@ -89,14 +89,8 @@ def run_interactive_chat():
                         continue
                     
                     elif command == "/save":
-                        if len(command_parts) > 1:
-                            filepath = command_parts[1]
-                        else:
-                            from datetime import datetime
-                            filepath = f"conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-                        
                         try:
-                            message = orchestrator.save_history(filepath)
+                            message = orchestrator.save_history()
                             print(message)
                         except Exception as e:
                             print(f"Error saving history: {e}")
