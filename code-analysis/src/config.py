@@ -16,7 +16,7 @@ IGNORE_DIRS = {
     'target'
 }
 
-MODEL_NAME = os.getenv("LLM_MODEL", "microsoft/phi-2")  
+MODEL_NAME = os.getenv("LLM_MODEL", "microsoft/DialoGPT-medium")  
 MAX_CONTEXT_TOKENS = 1024
 MAX_FILE_SIZE_BYTES = 50000  
 SUMMARIES_FILE = "summaries.json"
