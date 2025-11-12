@@ -1582,7 +1582,434 @@ class RunSqlTool(Tool[RunSqlToolArgs]):
 **deepseek-ai/deepseek-coder-6.7b-instruct**
 O primeiro código é uma classe chamada RunSqlTool no Python e ela está sendo inicializada com dois parâmetros opcionais: um objeto da interface SqlRunner e um objeto FileSystem opcional. Aqui estamos usando o padrão de projeto 'Injeção de Dependência' conhecido como um Design Pattern Gang of Four. Este padrão permite que os objetos dependentes sejam passados em vez de ser criado dentro dos métodos necessários. Neste caso, o método 'execute', especificamente, não precisa mais criar um objeto SqlRunner. Em vez disso, ele utiliza o objeto recebido por meio da dependência Injetada. Isto tornaria muito fácil alterar ou testar a lógica do banco de dados sem mudar grande parte do código principal. Isso seria especialmente importante quando você tiver diversos lugares onde você executa consultas SQL e deseja poder escolher entre diferentes implementaç�es de gerenciamento de BD sem ter que modificar vários locais de código.
 
+---
 
+## Como o Vanna Funciona: Integração dos Padrões de Projeto
+
+### Visão Geral do Fluxo
+
+O Vanna 2.0+ é um exemplo sofisticado de como múltiplos padrões de projeto trabalham juntos para criar um sistema extensível, testável e manutenível. Vamos entender como esses padrões se integram em um fluxo real de processamento de uma mensagem do usuário.
+
+### 1. O Ciclo de Vida de uma Mensagem
+
+```
+Usuário → [Dependency Injection] → Agent → [Chain] → [Strategy] → [Observer] → 
+[Registry] → [Template Method] → [Builder] → [Adapter] → Resposta
+```
+
+#### Passo 1: Inicialização com Dependency Injection
+
+```python
+# Todas as dependências são INJETADAS no Agent
+agent = Agent(
+    llm_service=AnthropicLlmService(),        # Strategy para LLM
+    tool_registry=ToolRegistry(),              # Registry de ferramentas
+    user_resolver=CookieUserResolver(),        # Strategy para autenticação
+    conversation_store=MemoryConversationStore(), # Strategy para storage
+    system_prompt_builder=DefaultSystemPromptBuilder(), # Builder
+    lifecycle_hooks=[AuditHook(), LoggingHook()],      # Chain
+    llm_middlewares=[CachingMiddleware()],             # Chain/Decorator
+    observability_provider=DatadogProvider(),          # Observer
+)
+```
+
+**Por que isso é poderoso:**
+- ✅ Cada dependência é **intercambiável** (Strategy)
+- ✅ Agent **não sabe** qual implementação concreta está usando
+- ✅ Fácil de testar: basta injetar mocks
+- ✅ Configuração centralizada e explícita
+
+---
+
+#### Passo 2: Processamento com Chain of Responsibility
+
+Quando uma mensagem chega, ela passa por múltiplas chains:
+
+```python
+async def send_message(self, request_context, message):
+    # CHAIN 1: LifecycleHooks (before_message)
+    for hook in self.lifecycle_hooks:  # Chain of Responsibility
+        message = await hook.before_message(user, message) or message
+        # Cada hook pode: validar, transformar, ou rejeitar a mensagem
+    
+    # CHAIN 2: WorkflowHandler tenta interceptar
+    workflow_result = await self.workflow_handler.try_handle(...)
+    if workflow_result.should_skip_llm:
+        # Short-circuit: comando foi tratado, não precisa do LLM
+        return workflow_result.components
+    
+    # Continua para o LLM...
+```
+
+**O que está acontecendo:**
+- 🔗 **Chain of Responsibility**: Mensagem passa por múltiplos handlers
+- 🎯 **Early exit**: WorkflowHandler pode evitar chamada ao LLM
+- 🔍 **Observer**: ObservabilityProvider monitora cada etapa
+
+---
+
+#### Passo 3: Strategy Pattern em Ação
+
+```python
+# STRATEGY 1: Resolver usuário (Strategy intercambiável)
+user = await self.user_resolver.resolve_user(request_context)
+# ^ Pode ser CookieResolver, JWTResolver, OAuth2Resolver...
+
+# STRATEGY 2: Buscar ferramentas do Registry
+tool_schemas = await self.tool_registry.get_schemas(user)
+# ^ Registry mantém todas as tools registradas
+
+# STRATEGY 3: Builder constrói o prompt
+system_prompt = await self.system_prompt_builder.build_system_prompt(
+    user, tool_schemas
+)
+# ^ Builder incrementalmente cria um prompt complexo
+```
+
+**Flexibilidade total:**
+- 🔄 Trocar de cookie para JWT? Basta mudar o UserResolver
+- 🔄 Adicionar nova tool? Só registrar no ToolRegistry
+- 🔄 Customizar prompt? Injetar outro SystemPromptBuilder
+
+---
+
+#### Passo 4: Middleware Pipeline (Decorator/Chain)
+
+```python
+async def _send_llm_request(self, request: LlmRequest):
+    # BEFORE PIPELINE - transforma request antes de enviar
+    for middleware in self.llm_middlewares:  # Decorator Pattern
+        request = await middleware.before_llm_request(request)
+        # Exemplos: adicionar cache key, sanitizar, log
+    
+    # CORE: Envia ao LLM (Strategy - pode ser Anthropic, OpenAI, etc.)
+    response = await self.llm_service.send_request(request)
+    
+    # AFTER PIPELINE - transforma response depois de receber
+    for middleware in self.llm_middlewares:
+        response = await middleware.after_llm_response(request, response)
+        # Exemplos: cache response, filtrar conteúdo, log
+    
+    return response
+```
+
+**Composição de comportamentos:**
+- 🎭 **Decorator**: Cada middleware adiciona comportamento sem modificar o core
+- 📦 **Composição**: Middlewares empilhados = comportamentos combinados
+- ⚡ **Performance**: Cache middleware pode evitar chamadas ao LLM
+
+---
+
+#### Passo 5: Template Method + Registry para Executar Tools
+
+```python
+# LLM retornou tool_calls, vamos executá-los
+for tool_call in response.tool_calls:
+    # REGISTRY: Busca tool por nome
+    tool = await self.tool_registry.get_tool(tool_call.name)
+    
+    # TEMPLATE METHOD: Tool.execute() é o template
+    # Cada tool concreta implementa seus próprios passos
+    result = await tool.execute(context, args)
+    #           ↑
+    #    RunSqlTool, SearchTool, CustomTool...
+    #    Todos seguem o mesmo template, mas com lógica específica
+```
+
+**Como isso funciona:**
+```python
+# Template Method na Tool base:
+class Tool(ABC):
+    def get_schema(self) -> ToolSchema:  # TEMPLATE METHOD
+        # Define o algoritmo:
+        # 1. Pega args_schema (delegado para subclasse)
+        args_model = self.get_args_schema()  # Hook
+        # 2. Converte para JSON schema (comum)
+        schema = args_model.model_json_schema()
+        # 3. Empacota com nome e descrição (delegados)
+        return ToolSchema(
+            name=self.name,           # Hook
+            description=self.description,  # Hook
+            parameters=schema
+        )
+```
+
+**Benefícios:**
+- 📋 **Template Method**: Estrutura comum, detalhes específicos
+- 🗂️ **Registry**: Acesso dinâmico a tools por nome
+- 🔌 **Extensibilidade**: Adicionar nova tool = implementar interface
+
+---
+
+#### Passo 6: Observer Pattern para Monitoramento
+
+Durante **todo o processo**, o ObservabilityProvider observa:
+
+```python
+# Agent é o SUBJECT, ObservabilityProvider é o OBSERVER
+
+# Notifica sobre resolução de usuário
+if self.observability_provider:  # Observer conectado?
+    span = await self.observability_provider.create_span("user_resolution")
+    # ... executa resolução ...
+    await self.observability_provider.end_span(span)
+    await self.observability_provider.record_metric(
+        "user_resolution.duration", 
+        span.duration_ms()
+    )
+
+# Notifica sobre execução de tool
+if self.observability_provider:
+    span = await self.observability_provider.create_span("tool.execute")
+    # ... executa tool ...
+    await self.observability_provider.end_span(span)
+```
+
+**Loose coupling:**
+- 👁️ **Observer**: Agent não precisa saber COMO o monitoring funciona
+- 🔌 **Optional**: Se não há observer, sistema funciona normalmente
+- 📊 **Múltiplos observers**: Pode ter Datadog, Prometheus, Console...
+
+---
+
+#### Passo 7: Abstract Factory para UI Components
+
+```python
+# Resultado da tool precisa virar UI component
+if df.empty:
+    ui_component = UiComponent(
+        rich_component=DataFrameComponent(rows=[], columns=[]),
+        simple_component=SimpleTextComponent(text="No results")
+    )
+else:
+    # ABSTRACT FACTORY: from_records é um factory method
+    dataframe_component = DataFrameComponent.from_records(
+        records=df.to_dict("records"),
+        title="Query Results"
+    )
+    ui_component = UiComponent(
+        rich_component=dataframe_component,
+        simple_component=SimpleTextComponent(text=str(records))
+    )
+```
+
+**Criação inteligente:**
+- 🏭 **Factory Method**: Encapsula lógica complexa de criação
+- 🎨 **Dual rendering**: Rich + Simple components para diferentes UIs
+- 📦 **Família de objetos**: UiComponent agrupa rich + simple
+
+---
+
+#### Passo 8: Adapter para Compatibilidade com Legacy
+
+```python
+# Sistema legacy usando VannaBase v1.0
+legacy_vanna = VannaBase(...)
+
+# ADAPTER: Envolve legacy para funcionar com v2.0
+adapter = LegacyVannaAdapter(legacy_vanna)
+
+# Agora pode usar como ToolRegistry E AgentMemory
+agent = Agent(
+    tool_registry=adapter,    # Adapter implementa ToolRegistry
+    agent_memory=adapter,     # Adapter implementa AgentMemory
+    # ... outras dependências ...
+)
+
+# Por baixo dos panos:
+# - adapter.save_tool_usage() → legacy.add_question_sql()
+# - adapter.search_similar_usage() → legacy.get_similar_question_sql()
+```
+
+**Migração suave:**
+- 🔌 **Adapter**: Interface antiga → Interface nova
+- 🛡️ **Proteção**: Código legacy não precisa mudar
+- 🚀 **Gradual**: Migre aos poucos, não big bang
+
+---
+
+### 2. Como os Padrões se Complementam
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    DEPENDENCY INJECTION                  │
+│        (Orquestra tudo, injeta todas as estratégias)    │
+└─────────────────────────────────────────────────────────┘
+                            │
+        ┌───────────────────┼───────────────────┐
+        ▼                   ▼                   ▼
+  ┌──────────┐        ┌──────────┐       ┌──────────┐
+  │ STRATEGY │        │ REGISTRY │       │ BUILDER  │
+  │ (Trocar  │        │ (Armazenar│      │ Construir│
+  │  implem.)│        │  e buscar)│      │          │
+  └──────────┘        └──────────┘       └──────────┘
+        │                   │                   │
+        └─────────┬─────────┴───────────────────┘
+                  ▼
+         ┌────────────────┐
+         │ TEMPLATE METHOD│
+         │                │
+         │                │
+         └────────────────┘
+                  │
+        ┌─────────┴─────────┐
+        ▼                   ▼
+  ┌──────────┐        ┌──────────┐
+  │  CHAIN   │        │ OBSERVER │
+  │(Pipeline │        │ (Monitora│
+  │ transform)│       │  eventos)│
+  └──────────┘        └──────────┘
+        │                   │
+        └─────────┬─────────┘
+                  ▼
+         ┌────────────────┐
+         │    ADAPTER     │
+         │(Compatibilidade│
+         │  com legacy)   │
+         └────────────────┘
+```
+
+### 3. Exemplo Concreto: Fluxo Completo
+
+Vamos rastrear **uma mensagem real** através de todos os padrões:
+
+**Input**: `"Mostre as vendas de 2024"`
+
+```python
+# 1. DEPENDENCY INJECTION: Agent já está configurado com todas as dependências
+
+# 2. CHAIN - LifecycleHooks
+#    AuditHook registra: "User X asked: 'Mostre as vendas de 2024'"
+#    ValidationHook verifica: usuário tem permissão?
+
+# 3. STRATEGY - UserResolver
+#    CookieUserResolver extrai user_id="analyst_123" dos cookies
+#    Retorna User(id="analyst_123", groups=["read_sales"])
+
+# 4. STRATEGY - WorkflowHandler
+#    DefaultWorkflowHandler retorna should_skip_llm=False
+#    (Não é um comando especial, vai para o LLM)
+
+# 5. BUILDER - SystemPromptBuilder
+#    Constrói prompt:
+#    "You are a SQL assistant. User: analyst_123. 
+#     Tools available: run_sql, search_docs. 
+#     Guidelines: Be concise..."
+
+# 6. REGISTRY - ToolRegistry
+#    Busca todas as tools acessíveis ao grupo "read_sales"
+#    Retorna: [run_sql, generate_chart] (search_docs bloqueado)
+
+# 7. CHAIN/DECORATOR - LlmMiddlewares (before)
+#    CachingMiddleware: Verifica cache → MISS
+#    LoggingMiddleware: Log "Sending request to LLM..."
+
+# 8. STRATEGY - LlmService
+#    AnthropicLlmService envia request para Claude
+#    Recebe: tool_call(name="run_sql", args={sql: "SELECT..."})
+
+# 9. CHAIN/DECORATOR - LlmMiddlewares (after)
+#    CachingMiddleware: Salva response no cache
+#    LoggingMiddleware: Log "Received response from LLM"
+
+# 10. OBSERVER - ObservabilityProvider
+#     Registra métricas:
+#     - llm.request.duration: 450ms
+#     - llm.tokens.input: 1200
+#     - llm.tokens.output: 85
+
+# 11. REGISTRY - ToolRegistry.get_tool()
+#     Busca "run_sql" → RunSqlTool
+
+# 12. TEMPLATE METHOD - Tool.execute()
+#     RunSqlTool.execute() usa o template:
+#     - Valida SQL (passo comum)
+#     - Executa via SqlRunner (passo específico)
+#     - Formata resultado (passo comum)
+
+# 13. STRATEGY - SqlRunner
+#     PostgresRunner executa SQL contra o banco
+#     Retorna DataFrame com resultados
+
+# 14. ABSTRACT FACTORY - DataFrameComponent.from_records()
+#     Cria componente de UI a partir dos dados:
+#     - Rich: Tabela formatada
+#     - Simple: Texto plano
+
+# 15. OBSERVER - ObservabilityProvider
+#     Registra:
+#     - tool.execute.duration: 125ms
+#     - tool.execute.success: true
+
+# 16. CHAIN - LifecycleHooks (after)
+#     AuditHook registra: "Tool run_sql executed successfully"
+#     
+# 17. Retorna UiComponent para o cliente
+```
+
+**Output**: Tabela com dados de vendas de 2024
+
+---
+
+### 4. Por Que Essa Combinação de Padrões?
+
+| Objetivo | Padrões Usados | Como Eles Ajudam |
+|----------|----------------|------------------|
+| **Extensibilidade** | Strategy, Registry, Template Method | Fácil adicionar novos LLMs, tools, prompts sem modificar core |
+| **Testabilidade** | Dependency Injection, Strategy | Injetar mocks para todas as dependências em testes |
+| **Manutenibilidade** | Separation of Concerns (cada padrão isola uma responsabilidade) | Mudanças localizadas, código mais limpo |
+| **Compatibilidade** | Adapter | Suporta código legacy sem reescrita |
+| **Observabilidade** | Observer | Monitoring desacoplado do código de negócio |
+| **Flexibilidade** | Chain/Decorator, Builder | Composição dinâmica de comportamentos |
+| **Performance** | Strategy (cache), Chain (short-circuit) | Otimizações sem complexidade no core |
+
+---
+
+### 5. Antipadrões Evitados
+
+O Vanna **intencionalmente evita** vários antipadrões:
+
+❌ **God Object**: Agent não faz tudo, delega para componentes especializados
+❌ **Tight Coupling**: Tudo são interfaces abstratas (Dependency Inversion)
+❌ **Hard-coded Dependencies**: Dependency Injection elimina isso
+❌ **Singletons Globais**: Tudo é instanciado e injetado explicitamente
+❌ **Magic Numbers/Strings**: Enums e constantes bem definidas
+
+---
+
+### 6. Conclusão: A Sinergia dos Padrões
+
+O poder do Vanna não está em usar padrões isoladamente, mas em como eles **trabalham juntos**:
+
+```
+Dependency Injection
+    ↓ fornece instâncias de
+Strategy Patterns
+    ↓ são armazenadas em
+Registry Patterns
+    ↓ são executadas através de
+Template Methods
+    ↓ passam por
+Chain of Responsibility
+    ↓ observados por
+Observer Pattern
+    ↓ criam resultados via
+Abstract Factory
+    ↓ compatíveis com legacy via
+Adapter Pattern
+```
+
+**Resultado final**: Um sistema que é:
+- ✅ **Extensível**: Adicione novos componentes sem modificar existentes
+- ✅ **Testável**: Todas as dependências são injetáveis/mockáveis
+- ✅ **Manutenível**: Responsabilidades claras e separadas
+- ✅ **Performático**: Otimizações via middlewares/caches
+- ✅ **Observável**: Métricas e logs desacoplados
+- ✅ **Compatível**: Suporta código legacy e migrações graduais
+
+Isso demonstra como padrões de projeto, quando aplicados corretamente, não são "overhead acadêmico", mas **ferramentas práticas** que resolvem problemas reais de engenharia de software.
+
+---
 
 ## Resumo dos Padrões Identificados
 
