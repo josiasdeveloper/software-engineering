@@ -3,9 +3,6 @@ from manual.orchestrator import Orchestrator
 from rich.console import Console
 from rich.panel import Panel
 from rich.markdown import Markdown
-from rich.syntax import Syntax
-from prompt_toolkit import prompt
-from prompt_toolkit.key_binding import KeyBindings
 
 console = Console()
 last_response = ""
@@ -25,10 +22,9 @@ def print_banner():
 - `/exit`       - Exit the assistant
 
 ## Tips:
-- **Paste code directly**: Just paste! Multi-line is fully supported
-- **Submit**: Press `Alt+Enter` or `Esc` then `Enter` to submit
-- **New line**: Press `Enter` to add a new line
-- **Cancel**: Press `Ctrl+C` to cancel
+- **For code**: Type `begin` to start multi-line mode, then `end` to finish
+- **For questions**: Just type and press Enter
+- **Copy responses**: Use `/raw` command to get plain text
 
 Start analyzing your codebase by pasting code snippets, documentation, 
 or asking questions about design patterns.
@@ -54,10 +50,10 @@ def print_help():
 ## Input Tips
 
 ### Multi-line Input
-- **Paste directly**: Just paste your code - multi-line works!
-- **Submit**: Press `Alt+Enter` or `Esc` then `Enter` to send
-- **New line**: Press `Enter` to add a new line while typing
-- **Single line**: Type your question and press `Alt+Enter`
+- Type `begin` to start multi-line mode
+- Paste or type your code (multiple lines)
+- Type `end` on a new line to finish
+- For single questions, just type normally
 
 ### Usage Examples
 1. **Ask questions**: "What design patterns are used in this code?"
@@ -108,24 +104,28 @@ Has Summary: {'Yes' if info['has_summary'] else 'No'}
 
 
 def get_user_input():
-    console.print("[bold green]You:[/bold green]")
-    console.print("[dim](Press Alt+Enter or Esc then Enter to submit)[/dim]")
+    console.print("[bold green]You:[/bold green] ", end="")
     
     try:
-        bindings = KeyBindings()
+        first_line = input().strip()
         
-        @bindings.add('escape', 'enter')
-        def _(event):
-            event.current_buffer.validate_and_handle()
+        if not first_line:
+            return ""
         
-        user_input = prompt(
-            '',
-            multiline=True,
-            key_bindings=bindings,
-            mouse_support=True
-        )
+        if first_line.lower() == "begin":
+            console.print("[dim]Multi-line mode. Type 'end' on a new line to finish.[/dim]")
+            lines = []
+            while True:
+                try:
+                    line = input()
+                    if line.strip().lower() == "end":
+                        break
+                    lines.append(line)
+                except EOFError:
+                    break
+            return "\n".join(lines)
         
-        return user_input.strip()
+        return first_line
     
     except KeyboardInterrupt:
         return None
