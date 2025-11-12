@@ -4,8 +4,11 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.markdown import Markdown
 from rich.syntax import Syntax
+from prompt_toolkit import prompt
+from prompt_toolkit.key_binding import KeyBindings
 
 console = Console()
+last_response = ""
 
 
 def print_banner():
@@ -17,14 +20,15 @@ def print_banner():
 - `/clear`      - Clear conversation history
 - `/restart`    - Restart model and clear all context
 - `/save`       - Save conversation history to file
+- `/raw`        - Show last response in plain text (easy to copy)
 - `/context`    - Show context usage information
 - `/exit`       - Exit the assistant
 
 ## Tips:
-- **Single-line**: Just type and press Enter
-- **Multi-line code**: Type \`\`\` then paste your code, then \`\`\` and Enter
-- **Or**: Paste code starting with \`\`\` and ending with \`\`\`
-- **Cancel**: Press `Ctrl+C` to cancel current input
+- **Paste code directly**: Just paste! Multi-line is fully supported
+- **Submit**: Press `Alt+Enter` or `Esc` then `Enter` to submit
+- **New line**: Press `Enter` to add a new line
+- **Cancel**: Press `Ctrl+C` to cancel
 
 Start analyzing your codebase by pasting code snippets, documentation, 
 or asking questions about design patterns.
@@ -43,21 +47,17 @@ def print_help():
 - `/clear`      - Clear conversation history (keeps model loaded)
 - `/restart`    - Restart model and clear all context
 - `/save`       - Save conversation history to file
+- `/raw`        - Show last response in plain text (easy to copy)
 - `/context`    - Display current context usage (tokens, messages)
 - `/exit`       - Exit the assistant
 
 ## Input Tips
 
 ### Multi-line Input
-- For **code/long text**: Type \`\`\` then paste your code, then \`\`\` on a new line
-- For **single line**: Just type normally and press Enter
-- **Example**:
-  ```
-  You: ```
-  def my_function():
-      return "Hello"
-  ```
-  ```
+- **Paste directly**: Just paste your code - multi-line works!
+- **Submit**: Press `Alt+Enter` or `Esc` then `Enter` to send
+- **New line**: Press `Enter` to add a new line while typing
+- **Single line**: Type your question and press `Alt+Enter`
 
 ### Usage Examples
 1. **Ask questions**: "What design patterns are used in this code?"
@@ -108,33 +108,24 @@ Has Summary: {'Yes' if info['has_summary'] else 'No'}
 
 
 def get_user_input():
-    console.print("[bold green]You:[/bold green] ", end="")
+    console.print("[bold green]You:[/bold green]")
+    console.print("[dim](Press Alt+Enter or Esc then Enter to submit)[/dim]")
     
     try:
-        first_line = input().strip()
+        bindings = KeyBindings()
         
-        if not first_line:
-            return ""
+        @bindings.add('escape', 'enter')
+        def _(event):
+            event.current_buffer.validate_and_handle()
         
-        if first_line == "```" or first_line.startswith("```"):
-            lines = []
-            if first_line != "```":
-                lines.append(first_line[3:].strip())
-            
-            console.print("[dim]  (multi-line mode - type ``` on a new line to finish)[/dim]")
-            
-            while True:
-                try:
-                    line = input()
-                    if line.strip() == "```":
-                        break
-                    lines.append(line)
-                except EOFError:
-                    break
-            
-            return "\n".join(lines)
+        user_input = prompt(
+            '',
+            multiline=True,
+            key_bindings=bindings,
+            mouse_support=True
+        )
         
-        return first_line
+        return user_input.strip()
     
     except KeyboardInterrupt:
         return None
@@ -143,6 +134,9 @@ def get_user_input():
 
 
 def print_response(response: str):
+    global last_response
+    last_response = response
+    
     md = Markdown(response)
     
     console.print()
@@ -152,7 +146,21 @@ def print_response(response: str):
         border_style="magenta",
         padding=(1, 2)
     ))
+    console.print("[dim]Tip: Use /raw to see plain text version[/dim]")
     console.print()
+
+
+def print_raw_response():
+    global last_response
+    if not last_response:
+        console.print("[yellow]No response to show yet[/yellow]\n")
+        return
+    
+    console.print("\n" + "="*70)
+    console.print("RAW TEXT (easy to copy):")
+    console.print("="*70)
+    print(last_response)
+    console.print("="*70 + "\n")
 
 
 def run_interactive_chat():
@@ -212,6 +220,10 @@ def run_interactive_chat():
                     
                     elif command == "/context":
                         print_context_info(orchestrator)
+                        continue
+                    
+                    elif command == "/raw":
+                        print_raw_response()
                         continue
                     
                     else:
