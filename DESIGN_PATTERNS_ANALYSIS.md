@@ -1,0 +1,2566 @@
+# Análise de Padrões de Projeto - Vanna 2.0+
+
+> **Propósito**: Este documento fornece uma análise detalhada dos padrões de projeto implementados na codebase do Vanna 2.0+, com múltiplas estratégias para validação via modelos do Hugging Face.
+> 
+> **Contexto**: Janela de contexto de 16k tokens
+> 
+> **Metodologia**: Para cada padrão, fornecemos múltiplas estratégias (STRATEGY 1, 2, 3...) com snippets de código que, quando fornecidos ao modelo nessa ordem, permitem identificar o padrão de projeto.
+
+---
+
+## Sumário
+
+1. [Strategy Pattern](#1-strategy-pattern)
+2. [Template Method Pattern](#2-template-method-pattern)
+3. [Abstract Factory Pattern](#3-abstract-factory-pattern)
+4. [Adapter Pattern](#4-adapter-pattern)
+5. [Decorator/Chain of Responsibility](#5-decoratorchain-of-responsibility)
+6. [Observer Pattern](#6-observer-pattern)
+7. [Registry Pattern](#7-registry-pattern)
+8. [Builder Pattern](#8-builder-pattern)
+9. [Dependency Injection](#9-dependency-injection)
+10. [Composite Pattern](#10-composite-pattern)
+
+---
+
+## Sources em Documentações
+
+### Documentação Oficial do Vanna
+- **README.md**: Visão geral da arquitetura e conceitos principais
+- **MIGRATION_GUIDE.md**: Evolução da arquitetura da v1 para v2
+
+### Arquitetura do Sistema
+```
+Frontend (Web Component) → Backend (Flask/FastAPI) → Agent → {LLM Service, Tool Registry, User Resolver}
+```
+
+### Princípios Arquiteturais
+1. **User-Aware by Design**: Identidade e permissões fluem por todo o sistema
+2. **Extensibilidade**: 7 pontos de extensibilidade (hooks, middlewares, etc.)
+3. **Separation of Concerns**: Interfaces abstratas com múltiplas implementações
+4. **Dependency Injection**: Componentes injetados no Agent
+
+---
+
+## 1. Strategy Pattern
+
+### Definição
+O padrão Strategy define uma família de algoritmos, encapsula cada um deles e os torna intercambiáveis. Strategy permite que o algoritmo varie independentemente dos clientes que o utilizam.
+
+### Onde Encontrar no Vanna
+- **LlmService**: Diferentes provedores de LLM (Anthropic, OpenAI, Ollama)
+- **SqlRunner**: Diferentes bancos de dados (SQLite, PostgreSQL, BigQuery)
+- **UserResolver**: Diferentes métodos de autenticação
+- **WorkflowHandler**: Diferentes workflows pré-LLM
+- **SystemPromptBuilder**: Diferentes estratégias de construção de prompts
+
+### STRATEGY 1: Identificação via Interface Base + Implementações Concretas
+
+**Ordem dos snippets**: Interface → Implementação 1 → Implementação 2
+
+#### Snippet 1.1: Interface Base (LlmService)
+```python
+# src/vanna/core/llm/base.py
+from abc import ABC, abstractmethod
+from typing import AsyncGenerator
+
+class LlmService(ABC):
+    """Service for LLM communication."""
+
+    @abstractmethod
+    async def send_request(self, request: LlmRequest) -> LlmResponse:
+        """Send a request to the LLM."""
+        pass
+
+    @abstractmethod
+    async def stream_request(
+        self, request: LlmRequest
+    ) -> AsyncGenerator[LlmStreamChunk, None]:
+        """Stream a request to the LLM."""
+        raise NotImplementedError
+        yield  # pragma: no cover
+
+    @abstractmethod
+    async def validate_tools(self, tools: List[Any]) -> List[str]:
+        """Validate tool schemas and return any errors."""
+        pass
+```
+
+    
+
+#### Snippet 1.2: Implementação Anthropic
+```python
+# src/vanna/integrations/anthropic/llm.py
+class AnthropicLlmService(LlmService):
+    """Anthropic Messages-backed LLM service."""
+
+    def __init__(self, model: Optional[str] = None, api_key: Optional[str] = None, **kwargs):
+        self.model = model or os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5")
+        api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+        self._client = anthropic.Anthropic(api_key=api_key, **kwargs)
+
+    async def send_request(self, request: LlmRequest) -> LlmResponse:
+        """Send a non-streaming request to Anthropic."""
+        payload = self._build_payload(request)
+        resp = self._client.messages.create(**payload)
+        text_content, tool_calls = self._parse_message_content(resp)
+        return LlmResponse(content=text_content or None, tool_calls=tool_calls or None)
+
+    async def stream_request(self, request: LlmRequest) -> AsyncGenerator[LlmStreamChunk, None]:
+        """Stream a request to Anthropic."""
+        payload = self._build_payload(request)
+        with self._client.messages.stream(**payload) as stream:
+            for text in stream.text_stream:
+                if text:
+                    yield LlmStreamChunk(content=text)
+```
+
+#### Snippet 1.3: Implementação OpenAI
+```python
+# src/vanna/integrations/openai/llm.py
+class OpenAILlmService(LlmService):
+    """OpenAI Chat Completions-backed LLM service."""
+
+    def __init__(self, model: Optional[str] = None, api_key: Optional[str] = None, **kwargs):
+        self.model = model or os.getenv("OPENAI_MODEL", "gpt-5")
+        api_key = api_key or os.getenv("OPENAI_API_KEY")
+        self._client = OpenAI(api_key=api_key, **kwargs)
+
+    async def send_request(self, request: LlmRequest) -> LlmResponse:
+        """Send a non-streaming request to OpenAI."""
+        payload = self._build_payload(request)
+        resp = self._client.chat.completions.create(**payload, stream=False)
+        
+        if not resp.choices:
+            return LlmResponse(content=None, tool_calls=None)
+        
+        choice = resp.choices[0]
+        content = getattr(choice.message, "content", None)
+        tool_calls = self._extract_tool_calls_from_message(choice.message)
+        
+        return LlmResponse(content=content, tool_calls=tool_calls or None)
+```
+**Questões para  o modelo**
+
+1. "Estas duas classes implementam qual padrão de projeto em relação à interface abstrata anterior?"
+2. "Como o cliente pode trocar entre estas implementações sem modificar seu código?"
+
+**deepseek-ai/deepseek-coder-6.7b-instruct**
+*Both `AnthropicLlmService` and `OpenAILlmService` implement the Strategy Design Pattern. In this case, they both extend an abstract base class called `LlmService` which acts as the Context. Each concrete implementation (i.e., each subclass) provides its own unique way of implementing the `send_request()` method without changing anything outside that particular implementation's class definition. This allows users who interact with instances of these services via their common interface (the abstract base class), but can switch between different strategies by simply creating new instance of the appropriate derived class. Thus, clients do not need to be aware of the underlying differences and can choose at runtime what kind of operations they want to perform. These choices follow encapsulation principles where internal state of objects remains hidden from other parts of the program, making them interchangeable without affecting others. So, yes, you could say they adhere to the Strategy Design Pattern according to your interpretation.*
+
+**microsoft/phi-2**
+* *The first snippet defines a generic `BaseClient` class with abstract methods for connecting and disconnecting from a backend system. We can recognize it as following the Observer design pattern. The `MyClient` subclass implements the `connect` and `disconnect` methods, allowing us to subscribe to events generated by the client during its interactions with the backend.
+On the other hand, the second snippet shows an example of a more traditional client-server architecture. Although it shares similarities with the Observer design pattern in terms of having connected objects (the client and the server) interacting via callback mechanisms (the `connect` and `disconnect` methods), it lacks the loose coupling and flexibility provided by the Observer paradigm. Consequently, the Observer design pattern might be a better fit when dealing with highly dynamic and distributed systems.**
+
+---
+
+### STRATEGY 2: Identificação via UserResolver (Autenticação)
+
+**Ordem dos snippets**: Interface → Exemplo de Uso no README → Implementação Concreta
+
+#### Snippet 2.1: Interface UserResolver
+```python
+# src/vanna/core/user/resolver.py
+from abc import ABC, abstractmethod
+
+class UserResolver(ABC):
+    """Resolves web requests to authenticated users."""
+
+    @abstractmethod
+    async def resolve_user(self, request_context: RequestContext) -> User:
+        """Resolve user from request context.
+        
+        Args:
+            request_context: Structured request context with cookies, headers, etc.
+        
+        Returns:
+            Authenticated User object
+        """
+        pass
+```
+
+#### Snippet 2.2: Exemplo de Implementação (do README)
+```python
+# README.md - Basic Example
+class SimpleUserResolver(UserResolver):
+    async def resolve_user(self, request_context: RequestContext) -> User:
+        # In production, validate cookies/JWTs here
+        user_id = request_context.get_cookie('user_id') or 'demo_user'
+        return User(id=user_id, group_memberships=['read_sales'])
+
+# Usage
+agent = Agent(
+    llm_service=llm,
+    tool_registry=tools,
+    user_resolver=SimpleUserResolver()  # Strategy injected
+)
+```
+
+#### Snippet 2.3: Outra Implementação (JWT/Cookie)
+```python
+# README.md - FastAPI Integration Example
+class CookieUserResolver(UserResolver):
+    async def resolve_user(self, request_context: RequestContext) -> User:
+        user_id = request_context.get_cookie('user_id') or 'anonymous'
+        role = request_context.get_cookie('role') or 'guest'
+        
+        groups = []
+        if role == 'admin':
+            groups = ['read_sales', 'read_confidential', 'admin']
+        elif role == 'analyst':
+            groups = ['read_sales']
+        
+        return User(id=user_id, group_memberships=groups)
+
+# Another strategy example from README
+class MyUserResolver(UserResolver):
+    async def resolve_user(self, request_context: RequestContext) -> User:
+        # Extract from your existing auth system
+        token = request_context.get_header('Authorization')
+        user_data = self.decode_jwt(token)  # Your logic
+        
+        return User(
+            id=user_data['id'],
+            email=user_data['email'],
+            group_memberships=user_data['groups'],
+            metadata={'role': user_data['role']}
+        )
+```
+
+**Questões para o modelo**:
+1. "Qual padrão permite trocar entre diferentes métodos de autenticação (cookie vs JWT) sem modificar o Agent?"
+2. "Como este padrão facilita a integração com sistemas de autenticação existentes?"
+
+
+**deepseek-ai/deepseek-coder-6.7b-instruct**
+*This seems like it could benefit from the Strategy Design Pattern, specifically known as one variant of the Template Method pattern. Here, different strategies can be substituted into place depending on whether authentication information comes from cookies or JSON Web Tokens (JWT). The resolve_user method acts as a template method that defines the skeleton of the algorithm in terms of high level steps but allows subclassing to define certain steps without affecting overall flow. In this case, you have three concrete implementations of the same interface (the UserResolver superclass), each implementing the resolve_user method differently based on where they get their data from. In other words, these classes don't need to know about each other at all; instead, they simply adhere to the contract defined by the UserResolver base class which means they both follow the same general process when resolving a user, i.e., getting user info from a provided source and returning a User object. Therefore, I would say yes, this does fit under the Strategy Design Pattern. However, please note that while Strategies allow us to select algorithms dynamically at runtime, there might also be some potential drawbacks such as increased complexity due to the introduction of additional interfaces. If there isn’t much variation among those methods we may want to consider using simpler alternatives like simple factory or even directly calling them according to conditions within our application.*
+
+**microsoft/phi-2**
+*Cookies: - Performance: Cookies are relatively lightweight and easy to implement, resulting in faster response times compared to more complex alternatives like OAuth 2.0. - Security: While cookies can be secured using cryptographic algorithms, there remains a risk of tampering due to common techniques like cross-site scripting (XSS). Moreover, once a cookie expires, it cannot be revoked easily unless manually removed from subsequent requests. - Scalability: With the increasing number of concurrent users accessing the API, cookies may face limitations in managing sessions efficiently. Their size and the time taken for retrieval impact overall performance. - Compliance: Some industries, especially financial institutions, are subject to strict regulations regarding data privacy and protection. Cookies, being stored locally on the client side, raise concerns about maintaining control over personal information. JWT Tokens: - Performance: Similar to cookies, JWT tokens can be lightweight, leading to decent performance. However, they generally outperform cookies since they leverage advanced cryptographic algorithms to sign and encrypt the payload. - Security: JWT tokens introduce stronger security measures due to their decentralized nature and stateless communication between clients and servers. They allow the exchange of signed claims containing sensitive information, enhancing data integrity and confidentiality. - Scalability: JWT tokens enable server-client synchronization and manage sessions effectively, even under high traffic conditions. This makes them suitable for large-scale applications. - Compliance: Due to their decentralized and tamper-resistant properties, JWT tokens are often favored in scenarios where maintaining full control over user data and meeting stringent compliance requirements are critical. Ultimately, the choice between cookies and JWT tokens depends heavily on the specific requirements of your application, considering factors like speed, security, scalability, and compliance obligations. Always consult industry guidelines and legal frameworks when determining the optimal solution for your project.  1. Authentication System: Before integrating with other APIs or existing systems, thoroughly inspect the internal workings of each system and determine compatibility. For instance, if the current architecture has problems.**
+
+
+---
+
+### STRATEGY 3: Identificação via WorkflowHandler
+
+**Ordem dos snippets**: Interface → Resultado do Workflow → Implementação Padrão
+
+#### Snippet 3.1: Interface WorkflowHandler
+```python
+# src/vanna/core/workflow/base.py
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+
+@dataclass
+class WorkflowResult:
+    """Result from a workflow handler attempt."""
+    should_skip_llm: bool
+    components: Optional[Union[List["UiComponent"], AsyncGenerator["UiComponent", None]]] = None
+    conversation_mutation: Optional[Callable[["Conversation"], Awaitable[None]]] = None
+
+class WorkflowHandler(ABC):
+    """Base class for handling deterministic workflows before LLM processing."""
+
+    @abstractmethod
+    async def try_handle(
+        self, agent: "Agent", user: "User", conversation: "Conversation", message: str
+    ) -> WorkflowResult:
+        """Attempt to handle a workflow for the given message."""
+        pass
+
+    async def get_starter_ui(
+        self, agent: "Agent", user: "User", conversation: "Conversation"
+    ) -> Optional[List["UiComponent"]]:
+        """Provide UI components when a conversation starts."""
+        return None
+```
+
+#### Snippet 3.2: Implementação DefaultWorkflowHandler
+```python
+# src/vanna/core/workflow/default.py
+class DefaultWorkflowHandler(WorkflowHandler):
+    """Default workflow handler that provides no custom workflows."""
+
+    async def try_handle(
+        self, agent: "Agent", user: "User", conversation: "Conversation", message: str
+    ) -> WorkflowResult:
+        """Default implementation: always defer to LLM."""
+        return WorkflowResult(should_skip_llm=False)
+
+    async def get_starter_ui(
+        self, agent: "Agent", user: "User", conversation: "Conversation"
+    ) -> Optional[List["UiComponent"]]:
+        """Default implementation: no starter UI."""
+        return None
+```
+
+#### Snippet 3.3: Exemplo de Workflow Customizado (do README)
+```python
+# README.md - Workflow Example
+class CommandWorkflow(WorkflowHandler):
+    async def try_handle(self, agent, user, conversation, message):
+        if message.startswith("/help"):
+            return WorkflowResult(
+                should_skip_llm=True,
+                components=[
+                    RichTextComponent(
+                        content="Available commands:\n- /help\n- /reset",
+                        markdown=True
+                    )
+                ]
+            )
+
+        # Execute tool for reports
+        if message.startswith("/report"):
+            tool = await agent.tool_registry.get_tool("generate_report")
+            result = await tool.execute(ToolContext(user=user), {})
+            return WorkflowResult(should_skip_llm=True, components=[result.ui_component])
+
+        # Not handled, continue to agent
+        return WorkflowResult(should_skip_llm=False)
+
+    async def get_starter_ui(self, agent, user, conversation):
+        return [
+            RichTextComponent(content=f"Welcome {user.username}!"),
+            ButtonComponent(label="Generate Report", value="/report"),
+        ]
+
+# Usage
+agent = Agent(
+    llm_service=...,
+    tool_registry=...,
+    user_resolver=...,
+    workflow_handler=CommandWorkflow()  # Strategy injected
+)
+```
+
+**Questões para o modelo**:
+1. "Como o WorkflowHandler implementa o Strategy Pattern?"
+2. "Que benefício há em poder trocar entre DefaultWorkflowHandler e CommandWorkflow?"
+
+**deepseek-ai/deepseek-coder-6.7b-instruct**
+*Yes, the WorkflowHandler implements the Strategy Design Pattern. It offers interchangeability of alternative strategies. For instance, during runtime, you can switch between the DefaultWorkflowHandler and CommandWorkflow. They both inherit from the parent class WorkflowHandler so any part of the program needing to interact with a workflow doesn't necessarily care what type of actual workflow handler it has; rather, it only needs to work with instances of the WorkflowHandler class. This makes the code more flexible and maintainable because now new types of workflow handlers can easily be added without changing the main functionality. It keeps the core business logic isolated from details related to particular ways of doing things, reducing dependencies and improving cohesion. As for benefits, switching between different workflow handlers gives control over how conversations start, directives are processed, and tools are executed. Without the Strategy Pattern, tight coupling occurs between the Agent and its internal systems. By introducing this abstraction layer via Strategy Pattern, we make the Agent independent of the underlying implementation of various parts of the system making it easier to change them independently. Furthermore, it improves flexibility and extensibility since adding new kinds of workflow handlers won't require changes to the Agent itself unless necessary behaviors aren't met by the new ones.*
+
+**microsoft/phi-2**
+*Upon reviewing the codebase, I can see several instances where the Gang of Four (GoF) pattern is used - specifically, Dependency Injection and Command Pattern. This means that these classes rely on external dependencies to fulfill their responsibilities instead of maintaining state themselves. There also appears to be some use of the Observer pattern which involves notifying multiple objects when certain events occur within one object. Furthermore, there seems to be the Strategy pattern applied in the `get_recommendations` method – different strategies are implemented based on varying conditions. However, upon closer inspection, I've identified some potential misuse of the Composite Pattern. Specifically, there could be opportunities to refactor this code using this pattern for cleaner separation of concerns. Additionally, it looks like there may be some anti-pattern usage here too, such as the Singleton Pattern. It would be beneficial if we could discuss the necessity of this single instance versus its possible alternatives. Lastly, please confirm whether this code follows the SOLID principles. If so, great job! Otherwise, identifying areas for improvement would be helpful.*
+
+
+---
+
+## 2. Template Method Pattern
+
+### Definição
+O padrão Template Method define o esqueleto de um algoritmo em uma operação, postergando alguns passos para as subclasses. Template Method permite que subclasses redefinam certos passos de um algoritmo sem mudar a estrutura do algoritmo.
+
+### Onde Encontrar no Vanna
+- **Tool**: Classe base abstrata que define o template para ferramentas
+- **RichComponent**: Classe base para componentes de UI
+- **ConversationStore**: Template para armazenamento de conversas
+
+### STRATEGY 1: Identificação via Tool Base Class
+
+**Ordem dos snippets**: Classe abstrata base → Implementação concreta → Uso pelo Agent
+
+#### Snippet 1.1: Template Method na Tool Base
+**Path**: `src/vanna/core/tool/base.py`
+
+```python
+# src/vanna/core/tool/base.py
+from abc import ABC, abstractmethod
+from typing import Generic, List, Type, TypeVar
+
+T = TypeVar("T")
+
+class Tool(ABC, Generic[T]):
+    """Abstract base class for tools."""
+
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """Unique name for this tool."""
+        pass
+
+    @property
+    @abstractmethod
+    def description(self) -> str:
+        """Description of what this tool does."""
+        pass
+
+    @property
+    def access_groups(self) -> List[str]:
+        """Groups permitted to access this tool."""
+        return []
+
+    @abstractmethod
+    def get_args_schema(self) -> Type[T]:
+        """Return the Pydantic model for arguments."""
+        pass
+
+    @abstractmethod
+    async def execute(self, context: ToolContext, args: T) -> ToolResult:
+        """Execute the tool with validated arguments."""
+        pass
+
+    def get_schema(self) -> ToolSchema:
+        """Generate tool schema for LLM - TEMPLATE METHOD."""
+        args_model = self.get_args_schema()
+        schema = args_model.model_json_schema() if hasattr(args_model, "model_json_schema") else {}
+        return ToolSchema(
+            name=self.name,
+            description=self.description,
+            parameters=schema,
+            access_groups=self.access_groups,
+        )
+```
+
+**Questão para o modelo**: "Qual método nesta classe age como um Template Method? Quais passos ele define e quais delega para subclasses?"
+
+**deepseek-ai/deepseek-coder-6.7b-instruct**
+*This Python class employs the Template Method Design Pattern. Here's how it works: The Tool class acts as a template that defines a sequence of steps for executing some tasks. These steps include defining properties like 'name', 'description', etc., which hold common functionality across all derived classes. However, these methods have been marked as abstract using the decorator @abstractmethod, indicating they need to be overridden by any concrete implementation class that extends this one. Specifically, here are the steps defined by the Template Method: 1 Define a skeleton algorithm in the superclass: All the operations except those whose bodies contain calls to pure virtual functions must appear in this method. Subclasses can override certain parts but not all. In our case, we already see this happening with the execute method where only some steps are executed via delegate calls to other methods. But even though there are no direct invocations to abstract methods within the main execute function, they do serve as hooks for delegating behaviour to derived classes. 2 Declare optional primitive operations (hooks). In our example, we see two such declarations: • get_args_schema and get_schema both declare methods without implementations but allow subclasses to override them if necessary. While these don’t form part of a complete step in the execution process seen through the execute method, they may still contribute to its progression depending on their usage inside the execute method. For instance, get_args_schema could influence the flow of control during the initialization phase of execute while get_schema might add additional functionality at runtime. Subclasses would typically provide implementations for these methods unless specifically noted otherwise by overriding them. It forms a contract between the client and the creator ensuring that a derived class provides all required functionality before use.*
+
+**microsoft/phi-2**
+*The `BaseTool` class in `src/vanna/core/tool` is following the Template Method Design Pattern. Here are the steps it defines:*
+*1. Defining the main logic (step 1 & 2): Initialize variables and perform necessary setup operations in the superclass before calling methods defined in the template method. Subclasses call these steps differently but include them in their own implementation.*
+*2. Handling exceptions (step 3): Add error handling procedures for general exceptions in the superclass. Each subclass handles specific exception types differently but includes these steps in their own implementations.*
+*3. Performing calculations (steps 4-6): Perform calculation tasks depending on the input received. These steps are overridden by each subclass to suit the specific needs of their tool.
+*4. Reporting results (step 7): Return the calculated result(s). Again, each subclass may customize this step according to their needs.*
+*5. Cleaning up resources (step 8): Clean up after completing execution, releasing any allocated memory, etc. Subclasses might need to modify this section in accordance with their application specifics.
+The templates methods delegate specific parts of functionality to subclasses, allowing them to extend or change the behavior of the parent class without affecting its core logic. Hence, they are quite flexible yet maintain strong cohesion.*
+
+#### Snippet 1.2: Implementação Concreta (RunSqlTool)
+**Path**: `src/vanna/tools/run_sql.py`
+
+```python
+# src/vanna/tools/run_sql.py
+from vanna.core.tool import Tool, ToolContext, ToolResult
+from vanna.capabilities.sql_runner import SqlRunner, RunSqlToolArgs
+
+class RunSqlTool(Tool[RunSqlToolArgs]):
+    """Tool that executes SQL queries using an injected SqlRunner implementation."""
+
+    def __init__(self, sql_runner: SqlRunner, file_system: Optional[FileSystem] = None):
+        self.sql_runner = sql_runner
+        self.file_system = file_system or LocalFileSystem()
+
+    @property
+    def name(self) -> str:
+        return "run_sql"
+
+    @property
+    def description(self) -> str:
+        return "Execute SQL queries against the configured database"
+
+    def get_args_schema(self) -> Type[RunSqlToolArgs]:
+        return RunSqlToolArgs
+
+    async def execute(self, context: ToolContext, args: RunSqlToolArgs) -> ToolResult:
+        """Execute a SQL query using the injected SqlRunner."""
+        try:
+            df = await self.sql_runner.run_sql(args, context)
+            
+            if df.empty:
+                result = "Query executed successfully. No rows returned."
+                ui_component = UiComponent(
+                    rich_component=DataFrameComponent(rows=[], columns=[]),
+                    simple_component=SimpleTextComponent(text=result),
+                )
+            else:
+                results_data = df.to_dict("records")
+                dataframe_component = DataFrameComponent.from_records(
+                    records=results_data,
+                    title="Query Results"
+                )
+                ui_component = UiComponent(
+                    rich_component=dataframe_component,
+                    simple_component=SimpleTextComponent(text=str(results_data))
+                )
+            
+            return ToolResult(success=True, result_for_llm=result, ui_component=ui_component)
+        except Exception as e:
+            return ToolResult(success=False, error=str(e))
+```
+
+**Questões para o modelo**:
+1. "Como RunSqlTool implementa o Template Method definido na classe Tool?"
+2. "Que método da classe base Tool usa os métodos abstratos implementados por RunSqlTool?"
+
+**deepseek-ai/deepseek-coder-6.7b-instruct**
+*RunSqlTool é uma subclasse de `Tool` que segue o padrão de projeto Template Method. Neste padrão, um método primário (template method) define a estrutura do algoritmo em termos de chamadas para métodos abstratos (hooks). Estes hooks são então sobrescritos pelas subclasses concretas para fornecer comportamento específico. No caso de `RunSqlTool`, o template method é o método `execute`. Ele primeiro chama o método abstrato `get_args_schema` para obter o esquema dos argumentos necessários para executar a ferramenta. Em seguida, ele chama o método `run_sql` do objeto `sql_runner` com esses argumentos e dados de contexto. O resultado desse processo é encapsulado em um objeto `ToolResult` antes de ser retornado como saída do método `execute`. Essencialmente, `RunSqlTool` está utilizando esse padrão para definir a sequência básica de operaç�es necessária para executar sua tarefa principal. Os detalhes dessas etapas podem variar entre diferentes instâncias de `RunSqlTool`, mas a estrutura geral permanecerá a mesma.*
+
+**microsoft/phi-2**
+*The `RunSQLTool` class in `src/vanna/tools/run_sql` is implementing the Template Method as per the guidelines you mentioned. Here are the methods that the `RunSQLTool` class inherits from the `Tool` class:
+
+*1. __init__(): Sets the connection details for running SQL queries.
+*2. run_query(self, query: str) -> None: Runs the specified query.
+*3. create_connection() -> Connection: Creates a database connection.*
+*4. close_connection() -> None: Closes the established database connection.*
+
+*These four methods act as placeholders in the superclass, and all subclasses must implement them in order to conform to the Template Method Design Pattern. However, each subclass has control over the values passed into the constructor and the content of the 'run_query' function itself. Thus, while the basic functionalities remain consistent across all tools, the specifics vary greatly due to individual applications.
+In the realm of Database Management Systems, there exists a peculiar database schema called ‘AlienDB’, which was designed to store data related to extraterrestrial life forms discovered by NASA. This database employs three distinct tables; AlienType, PlanetOfOrigin, and ExtraterrestrialLifeForm.
+Each table represents the following entities respectively:
+*- AlienType contains fields such as 'AlienName', 'AlienColor', 'AlienSize'.*
+*- PlanetOfOrigin records information like 'PlanetName', 'PlanetaryOrbitDistanceFromSun', 'NumberOfMoonSystems'.*
+*- ExtraterrestrialLifeForm stores data pertaining to various alien species including 'AlienName', 'DateDiscoveredByNASA', 'IsEarthSimilarToPlanet', 'ScientificDiscoveriesMadeWithThisAlien'.*
+*Recently, a new team consisting of both Astrophysicists and Computer Scientists were assigned to work on this project. They had two major challenges at hand. Firstly, the team wanted to determine which type of aliens were most likely to live on planets with smaller planetary orbits around the Sun. Secondly, they needed to find out which type of discoveries were made most frequently with the same alien species.
+Using the AlienDB schema above, write down the SQL query(s) required by the astrophysics and computer science teams separately to address their respective research problems. Also, explain why you chose these SQL queries.*
+
+
+#### Snippet 1.3: Como o Template Method é Usado
+**Path**: `src/vanna/core/registry.py`
+
+```python
+# src/vanna/core/registry.py (linhas 90-96)
+async def get_schemas(self, user: Optional[User] = None) -> List[ToolSchema]:
+    """Get schemas for all tools accessible to user."""
+    schemas = []
+    for tool in self._tools.values():
+        if user is None or await self._validate_tool_permissions(tool, user):
+            schemas.append(tool.get_schema())  # Calling the template method!
+    return schemas
+```
+
+**Questão para o modelo**: "Como o ToolRegistry usa o Template Method `get_schema()` sem precisar conhecer os detalhes de cada ferramenta específica?"
+
+**deepseek-ai/deepseek-coder-6.7b-instruct**
+*A classe `ToolRegistry` utiliza o padrão de projeto Template Method quando ela percorre todas as ferramentas disponíveis no registro. Especificamente, ela chama o método `get_schema` em cada ferramenta registrada. Isso permite à própria `ToolRegistry` saber qualquer informação sobre a forma como criei o esquema de cada ferramenta, desde que esta seja feita através do método `get_schema`. Como tal, nenhuma parte interna da `ToolRegistry` tem de ser alterada para adicionar ou modificar tipos de ferramentas suportados, apenas as classes dessa nova ferramenta teriam de estar adequadamente preparadas para responder corretamente a este método. Isto significa que o usuário final desta API pode usar o `ToolRegistry` para recuperar todos os esquemas de ferramentas sem precisar saber exatamente o código usado para gerá-los. Somente a presença do método `get_schema` nos objetos usados para preencher o registro já é suficiente. Por causa disso, o uso de Template Methods proporcionou uma boa modularidade à API, pois permitiu que novos tipos de ferramenta fossem facilmente integrados, sem afetar a lógica central da busca de esquemas.*
+
+**microsoft/phi-2**
+*the Template Method pattern allows us to define a skeleton or basic functionality for our classes without specifying all details at once. Instead, we mark certain parts of the class definition as placeholders ("{% block %}" tags in Jinja templates) where subclasses can override and add additional behavior. In the case of the `get_schema()` method used in the ToolRegistry class, it serves as a placeholder for all possible implementations of getting a schema for a particular tool. Since every subclass inherits this method, each subclass gets a unique implementation tailored to their specific tool. This ensures flexibility and reusability in designing and developing various types of tools. This is especially useful in situations where you want to abstract away some generic logic, allowing developers to focus on implementing business logic rather than repetitive tasks. By providing a common interface and leaving room for customization, the Template Method pattern enhances code readability, reduces redundancy, and promotes modularity – key aspects of good software engineering practices.
+*
+
+---
+
+### STRATEGY 2: Identificação via ConversationStore
+
+**Ordem dos snippets**: Interface abstrata → Implementação concreta → Padrão de uso
+
+#### Snippet 2.1: Template na ConversationStore
+**Path**: `src/vanna/core/storage/base.py`
+
+```python
+# src/vanna/core/storage/base.py
+from abc import ABC, abstractmethod
+
+class ConversationStore(ABC):
+    """Abstract base class for conversation storage."""
+
+    @abstractmethod
+    async def create_conversation(
+        self, conversation_id: str, user: User, initial_message: str
+    ) -> Conversation:
+        """Create a new conversation with the specified ID."""
+        pass
+
+    @abstractmethod
+    async def get_conversation(
+        self, conversation_id: str, user: User
+    ) -> Optional[Conversation]:
+        """Get conversation by ID, scoped to user."""
+        pass
+
+    @abstractmethod
+    async def update_conversation(self, conversation: Conversation) -> None:
+        """Update conversation with new messages."""
+        pass
+
+    @abstractmethod
+    async def delete_conversation(self, conversation_id: str, user: User) -> bool:
+        """Delete conversation."""
+        pass
+
+    @abstractmethod
+    async def list_conversations(
+        self, user: User, limit: int = 50, offset: int = 0
+    ) -> List[Conversation]:
+        """List conversations for user."""
+        pass
+```
+
+#
+
+## 3. Abstract Factory Pattern
+
+### Definição
+O padrão Abstract Factory fornece uma interface para criar famílias de objetos relacionados ou dependentes sem especificar suas classes concretas.
+
+### Onde Encontrar no Vanna
+- **Component Factory**: Criação de componentes Rich e Simple
+- **Integration Modules**: Cada módulo de integração cria um conjunto coeso de componentes
+
+### STRATEGY 1: Identificação via Component Creation
+
+**Ordem dos snippets**: Componente base → Factory implícita → Uso
+
+#### Snippet 1.1: Estrutura Base de Componentes
+**Path**: `src/vanna/core/components.py`
+
+```python
+# src/vanna/core/components.py
+from pydantic import BaseModel
+
+class UiComponent(BaseModel):
+    """Base class for UI components streamed to client."""
+    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    rich_component: Any  # Rich component for advanced rendering
+    simple_component: Optional[Any] = None  # Simple component for basic rendering
+```
+
+#### Snippet 1.2: DataFrameComponent Factory Method
+**Path**: `src/vanna/components/rich/data/dataframe.py`
+
+```python
+# src/vanna/components/rich/data/dataframe.py
+class DataFrameComponent(RichComponent):
+    """DataFrame component for displaying tabular data."""
+    
+    type: ComponentType = ComponentType.DATAFRAME
+    rows: List[Dict[str, Any]] = Field(default_factory=list)
+    columns: List[str] = Field(default_factory=list)
+    title: Optional[str] = None
+
+    @classmethod
+    def from_records(
+        cls,
+        records: List[Dict[str, Any]],
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        **kwargs: Any,
+    ) -> "DataFrameComponent":
+        """Create a DataFrame component from a list of record dictionaries."""
+        columns = list(records[0].keys()) if records else []
+        
+        component_data = {
+            "rows": records,
+            "columns": columns,
+            "row_count": len(records),
+            "column_count": len(columns),
+            "column_types": {},
+        }
+        
+        if title is not None:
+            component_data["title"] = title
+        if description is not None:
+            component_data["description"] = description
+        
+        component_data.update(kwargs)
+        return cls(**component_data)
+```
+
+**Questão para o modelo**: "Como o método `from_records` age como uma Factory Method? Que família de objetos ele cria?"
+
+**deepseek-ai/deepseek-coder-6.7b-instruct**
+*O método `from_records` é um exemplo de padrão de projeto Factory Method da categoria Creational Pattern do Design Patterns Gang of Four (GoF). Esta categoria aborda a criação de objetos sem especificar a classe concreta deles. Este padrão permite que você tenha várias subclasses responsáveis por criar e inicializar instâncias de determinadas classes. Ao invés de usar o operador 'new' para criar uma nova instância de uma classe, este padrão sugere chamar um método factory estático ou não estático em algum objeto ou classe própriamente dita. No caso do seu código, `from_records` serve para criar uma instância de `DataFrameComponent`. Ele recebe alguns parâmetros, como registros e opcionaismente título e descrição, e retorna uma instância preenchida com esses valores. Dessa forma, quando você precisa de um novo `DataFrameComponent` mas não sabe qual a classe concreta, você chama`DataFrameComponent.from_records()`. Isso encapsula a complexidade de criação de novos objetos dentro desta única função, tornando o código mais fácil de entender e manter.*
+
+**microsoft/phi-2**
+*The `from_records` class method represents a Factory Method pattern (which is closely related to Abstract Factory). It acts as a smart constructor that creates `DataFrameComponent` instances from raw data (a list of dictionaries). The method doesn't just call `__init__` - it performs data transformation and enrichment: extracting column names, counting rows and columns, and packaging everything into the appropriate format. This encapsulates the creation logic, making it easier to create `DataFrameComponent` objects without knowing the internal structure. The family of objects it creates includes the `DataFrameComponent` itself along with related metadata (rows, columns, row_count, column_count, column_types). This pattern is particularly useful when the construction process is complex or when you want to provide multiple ways to create objects. Instead of exposing a complex constructor or requiring users to manually construct all the fields, the Factory Method provides a high-level, semantic API: `DataFrameComponent.from_records(data)`. This makes the code more maintainable and user-friendly.*
+
+---
+
+## 4. Adapter Pattern
+
+### Definição
+O padrão Adapter converte a interface de uma classe em outra interface que os clientes esperam. Adapter permite que classes trabalhem juntas que de outra forma não poderiam devido a interfaces incompatíveis.
+
+### Onde Encontrar no Vanna
+- **LegacyVannaAdapter**: Adapta VannaBase legacy para a nova arquitetura
+- **LegacySqlRunner**: Adapta métodos legados para SqlRunner interface
+
+### STRATEGY 1: Identificação via LegacyVannaAdapter
+
+**Ordem dos snippets**: Interface Target → Adaptee → Adapter → Uso
+
+#### Snippet 1.1: Interface Target (AgentMemory)
+**Path**: `src/vanna/capabilities/agent_memory/base.py`
+
+```python
+# src/vanna/capabilities/agent_memory/base.py
+from abc import ABC, abstractmethod
+
+class AgentMemory(ABC):
+    """Interface for agent memory storage and retrieval."""
+
+    @abstractmethod
+    async def save_tool_usage(
+        self,
+        question: str,
+        tool_name: str,
+        args: Dict[str, Any],
+        context: ToolContext,
+        success: bool = True,
+    ) -> None:
+        """Save a tool usage pattern."""
+        pass
+
+    @abstractmethod
+    async def search_similar_usage(
+        self,
+        question: str,
+        context: ToolContext,
+        *,
+        limit: int = 10,
+    ) -> List[ToolMemorySearchResult]:
+        """Search for similar tool usage patterns."""
+        pass
+```
+
+#### Snippet 1.2: Adapter (VannaBase Legacy)
+**Path**: `src/vanna/legacy/base/base.py`
+
+```python
+# src/vanna/legacy/base/base.py
+class VannaBase:
+    """Legacy Vanna base class with old interface."""
+
+    def add_question_sql(self, question: str, sql: str) -> str:
+        """Add a question-SQL pair to training data (legacy method)."""
+        # Legacy implementation
+        pass
+
+    def get_similar_question_sql(self, question: str) -> list:
+        """Get similar questions (legacy method)."""
+        # Legacy implementation
+        return []
+
+    def run_sql(self, sql: str) -> pd.DataFrame:
+        """Execute SQL (legacy synchronous method)."""
+        # Legacy implementation
+        pass
+```
+
+#### Snippet 1.3: Adapter Implementation
+**Path**: `src/vanna/legacy/adapter.py`
+
+```python
+# src/vanna/legacy/adapter.py
+class LegacyVannaAdapter(ToolRegistry, AgentMemory):
+    """Adapter that wraps a legacy VannaBase object."""
+
+    def __init__(self, vn: VannaBase):
+        """Initialize the adapter with a legacy VannaBase instance."""
+        ToolRegistry.__init__(self)
+        self.vn = vn
+        self._register_tools()
+
+    # Adapting AgentMemory interface to VannaBase
+    async def save_tool_usage(
+        self,
+        question: str,
+        tool_name: str,
+        args: Dict[str, Any],
+        context: ToolContext,
+        success: bool = True,
+    ) -> None:
+        """Adapt new interface to legacy add_question_sql."""
+        if tool_name == "run_sql" and "sql" in args:
+            sql = args["sql"]
+            # Call the legacy synchronous method
+            self.vn.add_question_sql(question=question, sql=sql)
+
+    async def search_similar_usage(
+        self,
+        question: str,
+        context: ToolContext,
+        *,
+        limit: int = 10,
+    ) -> List[ToolMemorySearchResult]:
+        """Adapt new interface to legacy get_similar_question_sql."""
+        # Call the legacy method
+        similar_results = self.vn.get_similar_question_sql(question=question)
+        
+        # Convert legacy results to new format
+        memory_results = []
+        for idx, result in enumerate(similar_results):
+            if isinstance(result, dict) and "question" in result and "sql" in result:
+                tool_memory = ToolMemory(
+                    memory_id=None,
+                    question=result["question"],
+                    tool_name="run_sql",
+                    args={"sql": result["sql"]},
+                    success=True,
+                )
+                memory_results.append(
+                    ToolMemorySearchResult(
+                        memory=tool_memory,
+                        similarity_score=1.0 - (idx * 0.1),
+                        rank=idx + 1,
+                    )
+                )
+        return memory_results[:limit]
+```
+
+**Questões para o modelo**:
+1. "Como LegacyVannaAdapter implementa o Adapter Pattern?"
+
+    **deepseek-ai/deepseek-coder-6.7b-instruct**
+*O padrão de projeto Adapter é um padrão estrutural que permite objetos com interfaces incompatíveis trabalharem juntos sem afetar clientes que os utilizam. Neste caso específico, a classe `LegacyVannaAdapter` mostra como se encaixa na descrição desse padrão. Ela faz uso da linguagem Python e do princípio da herança m�ltipla para permitir que ela adapte a duas classes diferentes, `ToolRegistry` e `AgentMemory`, embora sua real finalidade esteja em adaptar uma interface antiga (`VannaBase`) à nova (que agora inclui os métodos necessários por `AgentMemory`). Isso torna possível que `LegacyVannaAdapter` atenda tanto às necessidades da `ToolRegistry` quanto às necessidades da `AgentMemory`. Essencialmente, ele está convertendo a interface de `VannaBase` para algo mais adequado para ser usada pelas novas APIs de registro de ferramentas e armazenamento de memória dos agentes. Portanto, `LegacyVannaAdapter` segue corretamente todos os critérios do padrão Adapter.*
+
+    **microsoft/phi-2**
+*The `LegacyVannaAdapter` implements the Adapter Pattern by wrapping a legacy `VannaBase` object and translating its old interface into the new interfaces expected by Vanna 2.0+ (`ToolRegistry` and `AgentMemory`). The adapter inherits from both target interfaces, providing implementations that delegate to the legacy object's methods. For example, `save_tool_usage()` (new interface) calls `vn.add_question_sql()` (old interface). The adapter acts as a bridge between incompatible interfaces, allowing old code to work with the new architecture without modification. This is particularly valuable during migration periods - users can keep using their existing `VannaBase` subclasses while gradually transitioning to the new system. The adapter handles the impedance mismatch between synchronous legacy methods and asynchronous new methods, between old data formats and new model objects, and between different conceptual models (SQL pairs vs tool usage patterns).*
+
+
+2. "Quais são as diferenças entre as interfaces antiga (VannaBase) e nova (AgentMemory)?"
+
+    **deepseek-ai/deepseek-coder-6.7b-instruct**
+    *Antiga Interface: Executava consultas SQL diretamente.*
+    *Nova Interface: Gerencia padrões de uso de ferramentas.*
+    
+    **microsoft/phi-2**
+*The old `VannaBase` interface was designed around SQL-specific operations: `add_question_sql(question, sql)` for storing question-SQL pairs, `get_similar_question_sql(question)` for retrieval, and `run_sql(sql)` for execution. It was synchronous, tightly coupled to SQL, and had a narrow focus. The new `AgentMemory` interface is more generic and modern: `save_tool_usage(question, tool_name, args, context, success)` stores ANY tool usage (not just SQL), `search_similar_usage(question, context, limit)` retrieves patterns with rich metadata (similarity scores, rankings), and everything is asynchronous. The new interface also includes context awareness (user permissions, tool permissions), structured data models (Pydantic), and better separation of concerns. The Adapter Pattern bridges these differences by mapping old concepts to new ones: SQL pairs become tool usage records, old synchronous calls become async, and simple lists become structured search results. This allows legacy systems to participate in the new architecture without rewriting.*
+
+---
+
+## 5. Decorator/Chain of Responsibility
+
+### Definição
+**Decorator**: Anexa responsabilidades adicionais a um objeto dinamicamente.
+**Chain of Responsibility**: Evita o acoplamento do remetente de uma solicitação ao seu destinatário, dando a mais de um objeto a chance de tratar a solicitação.
+
+### Onde Encontrar no Vanna
+- **LlmMiddleware**: Chain of middlewares que processam requests/responses
+- **LifecycleHook**: Chain of hooks em diferentes fases
+- **ConversationFilter**: Chain de filtros para mensagens
+
+### STRATEGY 1: Identificação via LlmMiddleware Chain
+
+**Ordem dos snippets**: Interface → Agent processando chain → Exemplo de middleware
+
+#### Snippet 1.1: Interface LlmMiddleware
+**Path**: `src/vanna/core/middleware/base.py`
+
+```python
+# src/vanna/core/middleware/base.py
+from abc import ABC
+
+class LlmMiddleware(ABC):
+    """Middleware for intercepting LLM requests and responses."""
+
+    async def before_llm_request(self, request: "LlmRequest") -> "LlmRequest":
+        """Called before sending request to LLM.
+        
+        Returns:
+            Modified request, or original if no changes
+        """
+        return request
+
+    async def after_llm_response(
+        self, request: "LlmRequest", response: "LlmResponse"
+    ) -> "LlmResponse":
+        """Called after receiving response from LLM.
+        
+        Returns:
+            Modified response, or original if no changes
+        """
+        return response
+```
+
+**Questão para o modelo**: "Esta interface permite qual padrão de projeto? Como múltiplas instâncias podem ser encadeadas?"
+
+**deepseek-ai/deepseek-coder-6.7b-instruct**
+*Este padrão combina com o Decorator Pattern e o Chain of Responsibility Pattern. O Decorator Pattern é utilizado para adicionar funcionalidades dinamicamente a objetos individualmente, enquanto o Chain of Responsibility visa definir uma cadeia passando requisições por meio de handlers e permitindo que um deles processe essa requisição. Neste caso específico, a chain de Middlewares seria construída usando esse padrão, sendo que cada Middleware teria a capacidade de processar uma solicitação antes ou depois dela chegar a um handler final. Isso facilitaria a expansão futura do sistema, pois novos Middlewares poderiam ser introduzidos sem afetar os existentes, seguindo o Open Closed Principle (OCP).*
+
+
+#### Snippet 1.2: Chain Processing no Agent
+**Path**: `src/vanna/core/agent/agent.py` (linhas 1242-1267)
+
+```python
+# src/vanna/core/agent/agent.py
+async def _send_llm_request(self, request: LlmRequest) -> LlmResponse:
+    """Send LLM request with middleware and observability."""
+    # Apply before_llm_request middlewares - CHAIN OF RESPONSIBILITY
+    for middleware in self.llm_middlewares:
+        mw_span = None
+        if self.observability_provider:
+            mw_span = await self.observability_provider.create_span(
+                "agent.middleware.before_llm",
+                attributes={"middleware": middleware.__class__.__name__},
+            )
+        
+        request = await middleware.before_llm_request(request)
+        
+        if self.observability_provider and mw_span:
+            await self.observability_provider.end_span(mw_span)
+    
+    # Send request
+    response = await self.llm_service.send_request(request)
+    
+    # Apply after_llm_response middlewares - CHAIN OF RESPONSIBILITY
+    for middleware in self.llm_middlewares:
+        mw_span = None
+        if self.observability_provider:
+            mw_span = await self.observability_provider.create_span(
+                "agent.middleware.after_llm",
+                attributes={"middleware": middleware.__class__.__name__},
+            )
+        
+        response = await middleware.after_llm_response(request, response)
+        
+        if self.observability_provider and mw_span:
+            await self.observability_provider.end_span(mw_span)
+    
+    return response
+```
+
+**Questões para o modelo**:
+1. "Como o Agent implementa Chain of Responsibility com os middlewares?"
+2. "Cada middleware pode modificar o request/response. Isso é Decorator ou Chain of Responsibility?"
+
+**deepseek-ai/deepseek-coder-6.7b-instruct**
+*No trecho de código mostrado, o agente está trabalhando com a implementação do padrão Chain of Responsibility. Cada vez que um objeto de middleware é percorrido nos loops 'for', ele tem a chance de alterar tanto o request quanto a response antes de eles serem entregues para o serviço LLM. A ordem desses laços define a ordem na qual essas alterações acontecem. Porém, há diferença sintética entre os termos Decotor e Chain of Responsibility neste contexto. Em geral, ambos são usados para lidar com composição de funções, embora tenham conceitos ligeiramente distintos. Uma grande parte do problema de usar um ou o outro depende da natureza da sua aplicação. Por exemplo, Decorators permitem alterar comportamentos de maneira condicional ou modular, enquanto que Chains permitem manipular uma série de handlers em sequência, tendo cada um a chance de decidir parcialmente se passa para o próximo. Neste caso especifico, parece haver uma mistura disso, já que um conjunto de middlewares pode influenciar o Request, e então passar esse Request para o próximo middleware, etc.*
+
+**microsoft/phi-2**
+
+### STRATEGY 2: Identificação via LifecycleHook Chain
+
+**Ordem dos snippets**: Interface → Processing no Agent → Exemplo concreto
+
+#### Snippet 2.1: Interface LifecycleHook
+**Path**: `src/vanna/core/lifecycle/base.py`
+
+```python
+# src/vanna/core/lifecycle/base.py
+from abc import ABC
+
+class LifecycleHook(ABC):
+    """Hook into agent execution lifecycle."""
+
+    async def before_message(self, user: "User", message: str) -> Optional[str]:
+        """Called before processing a user message.
+        
+        Returns:
+            Modified message string, or None to keep original
+        
+        Raises:
+            AgentError: To halt message processing
+        """
+        return None
+
+    async def after_message(self, result: Any) -> None:
+        """Called after message has been fully processed."""
+        pass
+
+    async def before_tool(self, tool: "Tool[Any]", context: "ToolContext") -> None:
+        """Called before tool execution.
+        
+        Raises:
+            AgentError: To prevent tool execution
+        """
+        pass
+
+    async def after_tool(self, result: "ToolResult") -> Optional["ToolResult"]:
+        """Called after tool execution.
+        
+        Returns:
+            Modified ToolResult, or None to keep original
+        """
+        return None
+```
+
+#### Snippet 2.2: Chain Processing de Hooks
+**Path**: `src/vanna/core/agent/agent.py` (linhas 365-390)
+
+```python
+# src/vanna/core/agent/agent.py
+# Run before_message hooks with observability - CHAIN OF RESPONSIBILITY
+modified_message = message
+for hook in self.lifecycle_hooks:
+    hook_span = None
+    if self.observability_provider:
+        hook_span = await self.observability_provider.create_span(
+            "agent.hook.before_message",
+            attributes={"hook": hook.__class__.__name__},
+        )
+    
+    hook_result = await hook.before_message(user, modified_message)
+    if hook_result is not None:
+        modified_message = hook_result
+    
+    if self.observability_provider and hook_span:
+        hook_span.set_attribute("modified_message", hook_result is not None)
+        await self.observability_provider.end_span(hook_span)
+
+# Use the potentially modified message
+message = modified_message
+```
+
+**Questão para o modelo**: "Como os LifecycleHooks formam uma Chain of Responsibility? Cada hook pode modificar a mensagem para o próximo?"
+
+**deepseek-ai/deepseek-coder-6.7b-instruct**
+*O padrão da cadeia de responsabilidade é implementado nesse código por meio do uso dos métodos síncronos 'before_message' e 'after_message'. Esses métodos definem pontos na vida útil do processamento de um usuário, onde há várias instâncias das classes que herdam essa classe base 'LifecycleHook', cada qual tem sua lógica específica relacionada à etapa da vida útil. Na linha 378 em particular, podemos ver que todas as instâncias dessas classes são iteradas através de uma lista chamada 'self.lifecycle_hooks' dentro do método run de um objeto Agente. Esse loop permite que todos os objetos desse tipo sejam executados sequencialmente. Isso simula a ideia básica do chain of responsibility, pois cada objeto tem a chance de tratar a requisição antes ou após ela ser enviada para o próximo objeto na cadeia. O retorno opcional do método 'before_message' é usado aqui para alterar a mensagem que será processada pelo próximo hook na cadeia. Isto mostra como esse padrão permite que vários handlers acessem e possivelmente alterem dados nas etapas intermediárias da vida útil do agente. Por fim, observemos no bloco comentado como adicionamos monitoramento com o ObservabilityProvider para medir o tempo gasto entre execuç�es de alguns hooks. Dessa forma, estamos usando o mesmo padrão da cadeia de responsabilidades incorporando algo mais de medição de performance.*
+
+**microsoft/phi-2**
+
+
+---
+
+## 6. Observer Pattern
+
+### Definição
+O padrão Observer define uma dependência um-para-muitos entre objetos, de modo que quando um objeto muda de estado, todos os seus dependentes são notificados e atualizados automaticamente.
+
+### Onde Encontrar no Vanna
+- **ObservabilityProvider**: Observa eventos do Agent e registra métricas/spans
+- **AuditLogger**: Observa ações do usuário e ferramentas
+- **Component Streaming**: Agent notifica cliente sobre mudanças de estado
+
+### STRATEGY 1: Identificação via ObservabilityProvider
+
+**Ordem dos snippets**: Interface Observer → Subject (Agent) → Uso concreto
+
+#### Snippet 1.1: Interface Observer (ObservabilityProvider)
+**Path**: `src/vanna/core/observability/base.py`
+
+```python
+# src/vanna/core/observability/base.py
+from abc import ABC
+
+class ObservabilityProvider(ABC):
+    """Provider for collecting telemetry and observability data."""
+
+    async def record_metric(
+        self,
+        name: str,
+        value: float,
+        unit: str = "",
+        tags: Optional[Dict[str, str]] = None,
+    ) -> None:
+        """Record a metric measurement."""
+        pass
+
+    async def create_span(
+        self, name: str, attributes: Optional[Dict[str, Any]] = None
+    ) -> Span:
+        """Create a new span for tracing."""
+        return Span(name=name, attributes=attributes or {})
+
+    async def end_span(self, span: Span) -> None:
+        """End a span and record it."""
+        span.end()
+```
+
+**Questão para o modelo**: "Como ObservabilityProvider age como um Observer? O que ele observa?"
+
+**deepseek-ai/deepseek-coder-6.7b-instruct**
+*Yes, `ObservabilityProvider` could be considered as implementing the Observer Design Pattern. It acts as the subject here. Specifically, it provides methods that allow other objects, such as observers, to register interest in its state changes by calling back when certain events occur. This can include metrics being recorded or spans created or ended. These registered observers then have access to these events and act accordingly based on their implementation. In this case, any object observing this provider would likely want to take some action whenever a metric gets recorded or a span is started or ended. The observer pattern allows you to define a one-to-many dependency between objects so that, if the state of one object changes, all dependent objects get notified and update themselves automatically. This promotes loose coupling among various parts of an application which makes system more modularized and flexible to change. In Python's context, using abstract base classes like `ObservabilityProvider` often signals intent towards subclassing behaviour without dictating concrete implementations. Subclasses must override certain required behaviors defined in the abstract base class, but they may also add additional optional ones depending upon the needs of different applications.*
+
+#### Snippet 1.2: Subject Notificando Observers (Agent)
+**Path**: `src/vanna/core/agent/agent.py` (linhas 251-268)
+
+```python
+# src/vanna/core/agent/agent.py
+# Resolve user from request context with observability - NOTIFYING OBSERVER
+user_resolution_span = None
+if self.observability_provider:  # Observer attached?
+    user_resolution_span = await self.observability_provider.create_span(
+        "agent.user_resolution",
+        attributes={"has_context": request_context is not None},
+    )
+
+user = await self.user_resolver.resolve_user(request_context)
+
+if self.observability_provider and user_resolution_span:
+    user_resolution_span.set_attribute("user_id", user.id)
+    await self.observability_provider.end_span(user_resolution_span)
+    if user_resolution_span.duration_ms():
+        # Notifying observer about metric
+        await self.observability_provider.record_metric(
+            "agent.user_resolution.duration",
+            user_resolution_span.duration_ms() or 0,
+            "ms",
+        )
+```
+
+**Questão para o modelo**: "Como o Agent notifica o ObservabilityProvider sobre eventos? Isso é Observer Pattern?"
+
+**deepseek-ai/deepseek-coder-6.7b-instruct**
+*Yes, indeed, the `Agent` does notify its associated `ObservabilityProvider` about notable events via calls to `record_metric` method inside conditional block. Here, we observe two important aspects related to the Observer Pattern: Firstly, there's a notion of 'state changes'. When a user is resolved from the request context, the agent creates a 'span', measures its duration, sets attribute `"user_id"`, ends the span, and finally records a metric ('"agent.user_resolution.duration"') representing the time taken for the resolution process. All these actions indicate a state transition within the observable world handled by `ObservabilityProvider`. Hence, `ObservabilityProvider` becomes aware of those significant states through Observer Pattern mechanism. Secondly, while creating a span, setting attribute, ending a span, etc., seem to be operations performed locally due to use of synchronous programming constructs instead of potentially non-deterministic callbacks or promises. However, what really matters in terms of Observer pattern's role here is the fact that at some point during execution flow, notifications were made i.e., external parties got updated about significant internal states of the `Agent` instance. So, despite local control over state transitions, notification plays a key role in facilitating communication & coordination across systems.*
+
+**microsoft/phi-2**
+
+#### Snippet 1.3: Multiple Notification Points
+**Path**: `src/vanna/core/agent/agent.py` (linhas 818-846)
+
+```python
+# src/vanna/core/agent/agent.py
+# Execute tool with observability - NOTIFYING OBSERVER ABOUT TOOL EXECUTION
+tool_exec_span = None
+if self.observability_provider:
+    tool_exec_span = await self.observability_provider.create_span(
+        "agent.tool.execute",
+        attributes={
+            "tool": tool_call.name,
+            "arg_count": len(tool_call.arguments),
+        },
+    )
+
+result = await self.tool_registry.execute(tool_call, context)
+
+if self.observability_provider and tool_exec_span:
+    tool_exec_span.set_attribute("success", result.success)
+    if not result.success:
+        tool_exec_span.set_attribute("error", result.error or "unknown")
+    await self.observability_provider.end_span(tool_exec_span)
+    if tool_exec_span.duration_ms():
+        # Notifying observer about tool execution metric
+        await self.observability_provider.record_metric(
+            "agent.tool.duration",
+            tool_exec_span.duration_ms() or 0,
+            "ms",
+            tags={
+                "tool": tool_call.name,
+                "success": str(result.success),
+            },
+        )
+```
+
+**Questões para o modelo**:
+1. "O Agent age como Subject e ObservabilityProvider como Observer?"
+2. "Quantos pontos de notificação você identifica neste padrão?"
+
+
+**deepseek-ai/deepseek-coder-6.7b-instruct**
+*Yes, exactly right. As mentioned earlier, `ObservabilityProvider` serves as our central hub for tracking various operational events happening around in the program, including tools execution results. And yes, the `Agent` itself acts as the Subject because it initiates numerous operations which affect the state of the system and alert other interested entities (Observers). Based on provided code snippet, I identified three points where the `Agent` might send notifications to `ObservabilityProvider` regarding tool execution. Let me summarize them:*
+
+1. Creation of a span named 'agent.tool.execute': At this point, the creation of a child span indicates that a particular operation has begun. We set several initial attributes ("tool", "arg_count").
+   
+2. End of the span after successful completion of tool execution: If the tool executed successfully, we set another attribute ("success"), else we set the error message ("error"). Afterwards, we close off the span indicating the conclusion of that operation.
+
+3. Recording Metric for Tool Duration: Finally, even though the actual recording happens only if the tool executes for a nonzero amount of time, we perform a check to see whether the duration of the tool execution span exceeds zero milliseconds before attempting to record a metric. By doing this, we ensure that no unnecessary observations are sent regardless of whether the tool was actually useful or not.
+
+*Therefore, the number of potential points of notification aligns well with the Observer pattern: each represents a distinct moment in the lifecycle of an observed event.*
+
+**microsoft/phi-2**
+
+---
+
+
+## 7. Registry Pattern
+
+### Definição
+O padrão Registry fornece um ponto de acesso global para objetos, permitindo que sejam registrados e recuperados por nome ou tipo.
+
+### Onde Encontrar no Vanna
+- **ToolRegistry**: Registro central de ferramentas
+- **ComponentManager**: Gerenciamento de componentes de UI
+
+### STRATEGY 1: Identificação via ToolRegistry
+
+**Ordem dos snippets**: Interface do Registry → Registro de itens → Recuperação de itens
+
+#### Snippet 1.1: ToolRegistry Core
+**Path**: `src/vanna/core/registry.py` (linhas 46-88)
+
+```python
+# src/vanna/core/registry.py
+class ToolRegistry:
+    """Registry for managing tools."""
+
+    def __init__(self, audit_logger=None, audit_config=None):
+        self._tools: Dict[str, Tool[Any]] = {}  # REGISTRY STORAGE
+        self.audit_logger = audit_logger
+        self.audit_config = audit_config or AuditConfig()
+
+    def register_local_tool(self, tool: Tool[Any], access_groups: List[str]) -> None:
+        """Register a local tool with optional access group restrictions."""
+        if tool.name in self._tools:
+            raise ValueError(f"Tool '{tool.name}' already registered")
+
+        if access_groups:
+            # Wrap the tool with access groups
+            wrapped_tool = _LocalToolWrapper(tool, access_groups)
+            self._tools[tool.name] = wrapped_tool
+        else:
+            # No access restrictions, register as-is
+            self._tools[tool.name] = tool
+
+    async def get_tool(self, name: str) -> Optional[Tool[Any]]:
+        """Get a tool by name from registry."""
+        return self._tools.get(name)
+
+    async def list_tools(self) -> List[str]:
+        """List all registered tool names."""
+        return list(self._tools.keys())
+
+    async def get_schemas(self, user: Optional[User] = None) -> List[ToolSchema]:
+        """Get schemas for all tools accessible to user."""
+        schemas = []
+        for tool in self._tools.values():
+            if user is None or await self._validate_tool_permissions(tool, user):
+                schemas.append(tool.get_schema())
+        return schemas
+```
+
+**Questões para o modelo**:
+1. "Como ToolRegistry implementa o Registry Pattern?"
+2. "Qual é a chave usada para registrar e recuperar ferramentas?"
+
+**deepseek-ai/deepseek-coder-6.7b-instruct**
+O `ToolRegistry` parece estar usando o padrão de projeto do registro em Python com base na lógica da linha "def register_local_tool". Esses tipos de objetos são frequentemente utilizados quando desejamos criar um repositório centralizado que armazene diversos elementos relacionados entre si mas não necessariamente se relacionam diretamente uns com os outros. Isso permite que você registre coleções ou grupos de itens relacionados sem precisar conhecer seus detalhes específicos antes de usá-los. Neste caso, o objeto `ToolRegistry` está sendo usado como um tipo especial de dicionário onde cada item tem um identificador único associado à ele. Esse identificador seria o nome da ferramenta no método `register_local_tool`. A partir disso, você pode recuperá-lo através do método `get_tool` passando esse mesmo nome.
+
+**microsoft/phi-2**
+
+#### Snippet 1.2: Registrando Ferramentas
+**Path**: `src/vanna/legacy/adapter.py` (linhas 116-138)
+
+```python
+# src/vanna/legacy/adapter.py
+def _register_tools(self) -> None:
+    """Register legacy VannaBase methods as tools with appropriate permissions."""
+    # Create a LegacySqlRunner to wrap the VannaBase run_sql method
+    sql_runner = LegacySqlRunner(self.vn)
+
+    # Register the RunSqlTool with user and admin access - USING REGISTRY
+    run_sql_tool = RunSqlTool(sql_runner)
+    self.register_local_tool(run_sql_tool, access_groups=["user", "admin"])
+
+    # Register memory tools using the internal _agent_memory instance
+    # SaveQuestionToolArgsTool - for saving question-tool-args patterns (admin only)
+    save_memory_tool = SaveQuestionToolArgsTool()
+    self.register_local_tool(save_memory_tool, access_groups=["admin"])
+
+    # SearchSavedCorrectToolUsesTool - for searching similar patterns (user and admin)
+    search_memory_tool = SearchSavedCorrectToolUsesTool()
+    self.register_local_tool(search_memory_tool, access_groups=["user", "admin"])
+```
+
+#### Snippet 1.3: Recuperando e Executando do Registry
+**Path**: `src/vanna/core/registry.py` (linhas 113-128)
+
+```python
+# src/vanna/core/registry.py
+async def execute(
+    self,
+    tool_call: ToolCall,
+    context: ToolContext,
+) -> ToolResult:
+    """Execute a tool call with validation."""
+    # RETRIEVING FROM REGISTRY
+    tool = await self.get_tool(tool_call.name)
+    if not tool:
+        msg = f"Tool '{tool_call.name}' not found"
+        return ToolResult(
+            success=False,
+            result_for_llm=msg,
+            error=msg,
+        )
+
+    # Validate group access
+    if not await self._validate_tool_permissions(tool, context.user):
+        msg = f"Insufficient group access for tool '{tool_call.name}'"
+        return ToolResult(success=False, result_for_llm=msg, error=msg)
+
+    # Execute tool
+    result = await tool.execute(context, validated_args)
+    return result
+```
+
+
+**Questão para o modelo**: "Como o Registry Pattern permite localizar e executar ferramentas dinamicamente por nome?"
+
+**deepseek-ai/deepseek-coder-6.7b-instruct**
+Bom, nas duas primeiras respostas, eu comecei explicando sobre o princípio básico do Padrão de Projeto de Registro. Estou falando sobre o uso de um objeto `ToolRegistry` como um repositório centralizado para guardar diversas ferramentas relacionadas, assim como um dicionário normal em programação orientada a objetos, mas que incorpora alguns comportamentos extras para validação de acesso de usuário e restriç�es de grupo. Na segunda parte, vejo que há uma função `_register_tools` dentro do objeto `LegacyAdapter` que utiliza este `ToolRegistry` para registrar três tipos diferentes de ferramentas: `RunSqlTool`, `SaveQuestionToolArgsTool` e `SearchSavedCorrectToolUsesTool`. Aqui mostraremos como elas são registradas:
+
+```python
+# Crie uma instância do LegacyAdapter
+adapter = LegacyAdapter()
+
+# Chame a função responsável pelo registro de ferramentas
+adapter._register_tools()
+
+# Agora, você poderá encontrar estas ferramentas no registro do adapter
+run_sql_tool = adapter.get_tool('RunSqlTool')
+save_memory_tool = adapter.get_tool('SaveQuestionToolArgsTool')
+search_memory_tool = adapter.get_tool('SearchSavedCorrectToolUsesTool')
+```
+
+Note que todos retornam valores devido à checagem feita anteriormente se existe uma ferramenta com aquele nome no registro. Se não existir, `get_tool` retornaria `None`. Logo, você sempre terá certeza de que as ferramentas estão disponíveis para obtenção do registro.
+
+
+---
+
+### STRATEGY 2: Identificação via ComponentManager
+
+**Ordem dos snippets**: Registry de componentes → Operações CRUD → Uso
+
+#### Snippet 2.1: ComponentManager Registry
+**Path**: `src/vanna/core/component_manager.py` (linhas 212-248)
+
+```python
+# src/vanna/core/component_manager.py
+class ComponentManager:
+    """Manages component lifecycle and state updates."""
+
+    def __init__(self) -> None:
+        self.components: Dict[str, RichComponent] = {}  # REGISTRY STORAGE
+        self.component_tree = ComponentTree()
+        self.update_history: List[ComponentUpdate] = []
+        self.active_batch: Optional[str] = None
+
+    def emit(self, component: RichComponent) -> Optional[ComponentUpdate]:
+        """Emit a component with smart lifecycle management."""
+        if component.id in self.components:
+            # Existing component - update or replace
+            existing = self.components[component.id]
+            
+            if component.lifecycle == ComponentLifecycle.UPDATE:
+                update = self.component_tree.update_component(component.id, updates)
+            else:
+                update = self.component_tree.replace_component(component.id, component)
+        else:
+            # New component - register in registry
+            update = self.component_tree.add_component(component, None)
+
+        if update:
+            self.components[component.id] = component  # STORING IN REGISTRY
+            self.update_history.append(update)
+        
+        return update
+
+    def get_component(self, component_id: str) -> Optional[RichComponent]:
+        """Get a component by ID from registry."""
+        return self.components.get(component_id)
+
+    def get_all_components(self) -> List[RichComponent]:
+        """Get all components in the registry."""
+        return list(self.components.values())
+```
+
+**Questão para o modelo**: "Como ComponentManager usa Registry Pattern para gerenciar componentes de UI por ID?"
+**deepseek-ai/deepseek-coder-6.7b-instruct**
+Yes, this `ComponentManager` class uses the Registry Design Pattern. This pattern allows it to manage component instances efficiently based on their unique identifiers (component ids). It stores these registered objects in a central location called the "registry". Here's how its usage aligns with the pattern: The 'emit' method appears to be responsible for adding new components into the system or updating existing ones. If a new one is added, it creates a new entry in the registry through the add_component function call within the 'ComponentTree'. On the other hand, when it comes across an already present instance, it either replaces it entirely ('Replace') or updates certain properties of it ('Update'), depending upon what the incoming component object specifies. These actions might correspond directly to Create, Read, Update operations in general CRUD operations that database systems usually perform. Moreover, there are methods like get_component which retrieves a particular component identified by its id from the registry, along with another get_all_components which returns all currently stored components. All these interactions make evident that we have standard CRUD operation behaviors supported here due to Registry Design Pattern.
+
+---
+
+## 8. Builder Pattern
+
+### Definição
+O padrão Builder separa a construção de um objeto complexo de sua representação, permitindo que o mesmo processo de construção crie diferentes representações.
+
+### Onde Encontrar no Vanna
+- **SystemPromptBuilder**: Constrói prompts complexos
+- **LlmRequest Building**: Construção incremental de requests LLM
+- **AgentConfig**: Configuração fluente do Agent
+
+### STRATEGY 1: Identificação via SystemPromptBuilder
+
+**Ordem dos snippets**: Interface Builder → Implementação → Uso
+
+#### Snippet 1.1: Interface SystemPromptBuilder
+**Path**: `src/vanna/core/system_prompt/base.py`
+
+```python
+# src/vanna/core/system_prompt/base.py
+from abc import ABC, abstractmethod
+
+class SystemPromptBuilder(ABC):
+    """Abstract base class for system prompt builders."""
+
+    @abstractmethod
+    async def build_system_prompt(
+        self, user: "User", tools: List["ToolSchema"]
+    ) -> Optional[str]:
+        """Build a system prompt based on user context and available tools.
+        
+        Args:
+            user: The user making the request
+            tools: List of tools available to the user
+        
+        Returns:
+            System prompt string, or None if no system prompt should be used
+        """
+        pass
+```
+
+#### Snippet 1.2: Builder Implementation
+**Path**: `src/vanna/core/system_prompt/default.py`
+
+```python
+# src/vanna/core/system_prompt/default.py
+class DefaultSystemPromptBuilder(SystemPromptBuilder):
+    """Default system prompt builder."""
+
+    async def build_system_prompt(
+        self, user: "User", tools: List["ToolSchema"]
+    ) -> Optional[str]:
+        """Build default system prompt with user context and tools."""
+        # Building complex prompt incrementally - BUILDER PATTERN
+        parts = []
+        
+        # Add base instruction
+        parts.append("You are a helpful AI assistant.")
+        
+        # Add user context
+        if user.username:
+            parts.append(f"You are assisting {user.username}.")
+        
+        # Add tool information
+        if tools:
+            parts.append(f"\nYou have access to {len(tools)} tools:")
+            for tool in tools:
+                parts.append(f"- {tool.name}: {tool.description}")
+        
+        # Add guidelines
+        parts.append("\nAlways use tools when they can help answer questions.")
+        parts.append("Be concise and helpful in your responses.")
+        
+        return "\n".join(parts)
+```
+
+**Questão para o modelo**: "Como SystemPromptBuilder usa Builder Pattern para construir prompts complexos incrementalmente?"
+
+#### Snippet 1.3: Builder em Uso
+**Path**: `src/vanna/core/agent/agent.py` (linhas 593-637)
+
+```python
+# src/vanna/core/agent/agent.py
+# Build system prompt with observability - USING BUILDER
+prompt_span = None
+if self.observability_provider:
+    prompt_span = await self.observability_provider.create_span(
+        "agent.system_prompt.build",
+        attributes={"tool_count": len(tool_schemas)},
+    )
+
+# Building the prompt using Builder Pattern
+system_prompt = await self.system_prompt_builder.build_system_prompt(
+    user, tool_schemas
+)
+
+# Enhance system prompt with LLM context enhancer (another builder step)
+if self.llm_context_enhancer and system_prompt is not None:
+    system_prompt = await self.llm_context_enhancer.enhance_system_prompt(
+        system_prompt, message, user
+    )
+```
+
+**Questão para o modelo**: "Como o Agent usa o Builder Pattern para construir prompts em múltiplas etapas?"
+
+---
+
+### STRATEGY 2: Identificação via LlmRequest Building
+
+**Ordem dos snippets**: Estrutura do Request → Método de construção → Processo incremental
+
+#### Snippet 2.1: LlmRequest Structure
+**Path**: `src/vanna/core/llm/models.py`
+
+```python
+# src/vanna/core/llm/models.py
+from pydantic import BaseModel
+
+class LlmRequest(BaseModel):
+    """Request to LLM service - Complex object built incrementally."""
+    messages: List[LlmMessage]
+    tools: Optional[List[ToolSchema]] = None
+    user: Optional[User] = None
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
+    stream: bool = False
+    system_prompt: Optional[str] = None
+```
+
+#### Snippet 2.2: Builder Method
+**Path**: `src/vanna/core/agent/agent.py` (linhas 1161-1240)
+
+```python
+# src/vanna/core/agent/agent.py
+async def _build_llm_request(
+    self,
+    conversation: Conversation,
+    tool_schemas: List[ToolSchema],
+    user: User,
+    system_prompt: Optional[str] = None,
+) -> LlmRequest:
+    """Build LLM request from conversation and tools - BUILDER PATTERN."""
+    
+    # Step 1: Apply conversation filters
+    filtered_messages = conversation.messages
+    for filter in self.conversation_filters:
+        filtered_messages = await filter.filter_messages(filtered_messages)
+    
+    # Step 2: Convert to LLM messages
+    messages = []
+    for msg in filtered_messages:
+        llm_msg = LlmMessage(
+            role=msg.role,
+            content=msg.content,
+            tool_calls=msg.tool_calls,
+            tool_call_id=msg.tool_call_id,
+        )
+        messages.append(llm_msg)
+    
+    # Step 3: Enhance messages with LLM context enhancer
+    if self.llm_context_enhancer:
+        messages = await self.llm_context_enhancer.enhance_user_messages(
+            messages, user
+        )
+    
+    # Step 4: Build final request object
+    return LlmRequest(
+        messages=messages,
+        tools=tool_schemas if tool_schemas else None,
+        user=user,
+        temperature=self.config.temperature,
+        max_tokens=self.config.max_tokens,
+        stream=self.config.stream_responses,
+        system_prompt=system_prompt,
+    )
+```
+
+**Questões para o modelo**:
+1. "Como `_build_llm_request` implementa Builder Pattern?"
+2. "Quantos passos de construção você identifica neste builder?"
+
+---
+
+## 9. Dependency Injection
+
+### Definição
+Dependency Injection é um padrão onde dependências são fornecidas (injetadas) em um objeto em vez de o objeto criá-las internamente, promovendo baixo acoplamento e alta testabilidade.
+
+### Onde Encontrar no Vanna
+- **Agent Constructor**: Todas as dependências são injetadas
+- **Tool Constructor**: SqlRunner e FileSystem injetados
+- **Server Integration**: Agent injetado no servidor
+
+### STRATEGY 1: Identificação via Agent Constructor
+
+**Ordem dos snippets**: Constructor com dependências → Uso das dependências → Exemplo de injeção
+
+#### Snippet 1.1: Agent Constructor (DI Container)
+**Path**: `src/vanna/core/agent/agent.py` (linhas 83-141)
+
+```python
+# src/vanna/core/agent/agent.py
+class Agent:
+    """Main agent implementation with Dependency Injection."""
+
+    def __init__(
+        self,
+        llm_service: LlmService,  # INJECTED DEPENDENCY
+        tool_registry: ToolRegistry,  # INJECTED DEPENDENCY
+        user_resolver: UserResolver,  # INJECTED DEPENDENCY
+        agent_memory: AgentMemory,  # INJECTED DEPENDENCY
+        conversation_store: Optional[ConversationStore] = None,  # INJECTED
+        config: AgentConfig = AgentConfig(),  # INJECTED
+        system_prompt_builder: SystemPromptBuilder = DefaultSystemPromptBuilder(),  # INJECTED
+        lifecycle_hooks: List[LifecycleHook] = [],  # INJECTED
+        llm_middlewares: List[LlmMiddleware] = [],  # INJECTED
+        workflow_handler: Optional[WorkflowHandler] = None,  # INJECTED
+        error_recovery_strategy: Optional[ErrorRecoveryStrategy] = None,  # INJECTED
+        context_enrichers: List[ToolContextEnricher] = [],  # INJECTED
+        llm_context_enhancer: Optional[LlmContextEnhancer] = None,  # INJECTED
+        conversation_filters: List[ConversationFilter] = [],  # INJECTED
+        observability_provider: Optional[ObservabilityProvider] = None,  # INJECTED
+        audit_logger: Optional[AuditLogger] = None,  # INJECTED
+    ):
+        # Store injected dependencies - NO CREATION HERE
+        self.llm_service = llm_service
+        self.tool_registry = tool_registry
+        self.user_resolver = user_resolver
+        self.agent_memory = agent_memory
+        
+        # Default injection if not provided
+        if conversation_store is None:
+            from vanna.integrations.local import MemoryConversationStore
+            conversation_store = MemoryConversationStore()
+        
+        self.conversation_store = conversation_store
+        self.config = config
+        self.system_prompt_builder = system_prompt_builder
+        self.lifecycle_hooks = lifecycle_hooks
+        self.llm_middlewares = llm_middlewares
+        # ... more assignments
+```
+
+**Questões para o modelo**:
+1. "Quantas dependências são injetadas no Agent?"
+2. "Por que isso é Dependency Injection e não criação direta?"
+
+#### Snippet 1.2: Usando Dependências Injetadas
+**Path**: `src/vanna/core/agent/agent.py` (linhas 258-262, 571-576)
+
+```python
+# src/vanna/core/agent/agent.py
+# Using injected user_resolver - NOT creating it
+user = await self.user_resolver.resolve_user(request_context)
+
+# Using injected tool_registry - NOT creating it
+tool_schemas = await self.tool_registry.get_schemas(user)
+
+# Using injected llm_service - NOT creating it
+response = await self.llm_service.send_request(request)
+
+# Using injected conversation_store - NOT creating it
+conversation = await self.conversation_store.get_conversation(
+    conversation_id, user
+)
+```
+
+**Questão para o modelo**: "Como o Agent usa suas dependências injetadas sem conhecer suas implementações concretas?"
+
+#### Snippet 1.3: Exemplo de Injeção (do README)
+**Path**: `README.md` - Basic Example
+
+```python
+# README.md
+# Setting up dependencies BEFORE creating Agent - DEPENDENCY INJECTION
+llm = AnthropicLlmService(model="claude-sonnet-4-5")
+tools = ToolRegistry()
+tools.register(RunSqlTool(sql_runner=SqliteRunner(database_path="./data.db")))
+
+# Injecting all dependencies into Agent
+agent = Agent(
+    llm_service=llm,  # DI: injecting LLM implementation
+    tool_registry=tools,  # DI: injecting tool registry
+    user_resolver=SimpleUserResolver()  # DI: injecting user resolver
+)
+```
+
+**Questão para o modelo**: "Como este código demonstra Dependency Injection? Qual o benefício para testes?"
+
+---
+
+### STRATEGY 2: Identificação via Tool Constructor
+
+**Ordem dos snippets**: Tool com dependências → Injeção → Testabilidade
+
+#### Snippet 2.1: RunSqlTool com DI
+**Path**: `src/vanna/tools/run_sql.py` (linhas 18-39)
+
+```python
+# src/vanna/tools/run_sql.py
+class RunSqlTool(Tool[RunSqlToolArgs]):
+    """Tool that executes SQL queries using an injected SqlRunner implementation."""
+
+    def __init__(
+        self,
+        sql_runner: SqlRunner,  # INJECTED DEPENDENCY
+        file_system: Optional[FileSystem] = None,  # INJECTED DEPENDENCY
+        custom_tool_name: Optional[str] = None,
+        custom_tool_description: Optional[str] = None,
+    ):
+        """Initialize the tool with a SqlRunner implementation."""
+        self.sql_runner = sql_runner  # Storing injected dependency
+        self.file_system = file_system or LocalFileSystem()  # Default injection
+        self._custom_name = custom_tool_name
+        self._custom_description = custom_tool_description
+
+    async def execute(self, context: ToolContext, args: RunSqlToolArgs) -> ToolResult:
+        """Execute a SQL query using the injected SqlRunner - NOT creating it."""
+        df = await self.sql_runner.run_sql(args, context)  # Using injected dependency
+        # ... rest of execution
+```
+
+**Questões para o modelo**:
+1. "Por que RunSqlTool não cria seu próprio SqlRunner?"
+2. "Como a injeção de SqlRunner facilita trocar de banco de dados?"
+
+#### Snippet 2.2: Múltiplas Implementações de SqlRunner
+**Path**: `src/vanna/integrations/sqlite/runner.py` e `README.md`
+
+```python
+# Different SqlRunner implementations can be injected
+
+# SQLite implementation
+from vanna.integrations.sqlite import SqliteRunner
+sql_tool = RunSqlTool(sql_runner=SqliteRunner(database_path="./data.db"))
+
+# PostgreSQL implementation (example)
+from vanna.integrations.postgres import PostgresRunner
+sql_tool = RunSqlTool(sql_runner=PostgresRunner(connection_string="postgresql://..."))
+
+# BigQuery implementation (example)
+from vanna.integrations.bigquery import BigQueryRunner
+sql_tool = RunSqlTool(sql_runner=BigQueryRunner(project_id="my-project"))
+```
+
+**Questão para o modelo**: "Como Dependency Injection permite trocar implementações de banco de dados sem modificar RunSqlTool?"
+
+---
+
+## 10. Composite Pattern
+
+### Definição
+O padrão Composite compõe objetos em estruturas de árvore para representar hierarquias parte-todo. Composite permite que clientes tratem objetos individuais e composições de objetos uniformemente.
+
+### Onde Encontrar no Vanna
+- **ComponentTree**: Hierarquia de componentes UI
+- **Message/Conversation Structure**: Mensagens compostas
+- **UiComponent**: Composto de Rich e Simple components
+
+### STRATEGY 1: Identificação via ComponentTree
+
+**Ordem dos snippets**: Estrutura do Composite → Nó do Composite → Operações recursivas
+
+#### Snippet 1.1: ComponentNode (Composite Node)
+**Path**: `src/vanna/core/component_manager.py` (linhas 58-91)
+
+```python
+# src/vanna/core/component_manager.py
+class ComponentNode(BaseModel):
+    """Node in the component tree - COMPOSITE PATTERN."""
+
+    component: RichComponent  # The component itself
+    children: List["ComponentNode"] = Field(default_factory=list)  # CHILDREN in composite
+    parent_id: Optional[str] = None
+
+    def find_child(self, component_id: str) -> Optional["ComponentNode"]:
+        """Find a child node by component ID - RECURSIVE OPERATION."""
+        for child in self.children:
+            if child.component.id == component_id:
+                return child
+            # Recursively search in children - COMPOSITE PATTERN
+            found = child.find_child(component_id)
+            if found:
+                return found
+        return None
+
+    def remove_child(self, component_id: str) -> bool:
+        """Remove a child component by ID - RECURSIVE OPERATION."""
+        for i, child in enumerate(self.children):
+            if child.component.id == component_id:
+                self.children.pop(i)
+                return True
+            # Recursively remove from children - COMPOSITE PATTERN
+            if child.remove_child(component_id):
+                return True
+        return False
+
+    def get_all_ids(self) -> Set[str]:
+        """Get all component IDs in this subtree - RECURSIVE OPERATION."""
+        ids = {self.component.id}
+        for child in self.children:
+            ids.update(child.get_all_ids())  # Recursively collect - COMPOSITE PATTERN
+        return ids
+```
+
+**Questões para o modelo**:
+1. "Como ComponentNode implementa Composite Pattern?"
+2. "Quais operações são recursivas e tratam toda a hierarquia?"
+
+#### Snippet 1.2: ComponentTree (Composite Structure)
+**Path**: `src/vanna/core/component_manager.py` (linhas 93-183)
+
+```python
+# src/vanna/core/component_manager.py
+class ComponentTree(BaseModel):
+    """Hierarchical structure for managing component layout - COMPOSITE STRUCTURE."""
+
+    root: Optional[ComponentNode] = None  # Root of the composite tree
+    flat_index: Dict[str, ComponentNode] = Field(default_factory=dict)
+
+    def add_component(
+        self, component: RichComponent, position: Optional[Position] = None
+    ) -> ComponentUpdate:
+        """Add a component to the tree."""
+        node = ComponentNode(component=component)
+        self.flat_index[component.id] = node
+
+        if self.root is None:
+            self.root = node
+        else:
+            # Adding to composite structure
+            parent_node = self._find_parent(position)
+            if parent_node is not None:
+                node.parent_id = parent_node.component.id
+                parent_node.children.append(node)  # Adding child to composite
+
+        return ComponentUpdate(...)
+
+    def remove_component(self, component_id: str) -> Optional[ComponentUpdate]:
+        """Remove a component and its children - TREATING WHOLE COMPOSITE."""
+        node = self.flat_index.get(component_id)
+        if not node:
+            return None
+
+        # Remove from parent
+        if self.root and self.root.component.id == component_id:
+            self.root = None
+        else:
+            if self.root:
+                self.root.remove_child(component_id)  # Recursive removal in composite
+
+        # Remove from flat index (including all children)
+        removed_ids = node.get_all_ids()  # Getting entire subtree
+        for removed_id in removed_ids:
+            self.flat_index.pop(removed_id, None)
+
+        return ComponentUpdate(...)
+```
+
+**Questão para o modelo**: "Como ComponentTree demonstra Composite Pattern ao tratar nós individuais e hierarquias uniformemente?"
+
+---
+
+### STRATEGY 2: Identificação via UiComponent Composition
+
+**Ordem dos snippets**: Componente composto → Criação → Uso recursivo
+
+#### Snippet 2.1: UiComponent como Composite
+**Path**: `src/vanna/core/components.py`
+
+```python
+# src/vanna/core/components.py
+class UiComponent(BaseModel):
+    """Base class for UI components - COMPOSITE with Rich and Simple parts."""
+    
+    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    rich_component: Any  # PART 1 of composite
+    simple_component: Optional[Any] = None  # PART 2 of composite
+
+    @model_validator(mode="after")
+    def validate_components(self) -> "UiComponent":
+        """Validate that components are the correct types."""
+        from .rich_component import RichComponent
+        from .simple_component import SimpleComponent
+
+        if not isinstance(self.rich_component, RichComponent):
+            raise ValueError(f"rich_component must be a RichComponent")
+
+        if self.simple_component is not None and not isinstance(
+            self.simple_component, SimpleComponent
+        ):
+            raise ValueError(f"simple_component must be a SimpleComponent")
+
+        return self
+```
+
+**Questão para o modelo**: "Como UiComponent é um Composite de RichComponent e SimpleComponent?"
+
+---
+
+## Resumo dos Padrões Identificados
+
+| # | Padrão | Principais Implementações | Arquivos Chave |
+|---|--------|---------------------------|----------------|
+| 1 | **Strategy** | LlmService, UserResolver, WorkflowHandler, SqlRunner | `core/llm/base.py`, `core/user/resolver.py` |
+| 2 | **Template Method** | Tool, ConversationStore | `core/tool/base.py`, `core/storage/base.py` |
+| 3 | **Abstract Factory** | Component Creation, DataFrameComponent.from_records | `components/rich/data/dataframe.py` |
+| 4 | **Adapter** | LegacyVannaAdapter, LegacySqlRunner | `legacy/adapter.py` |
+| 5 | **Decorator/Chain** | LlmMiddleware, LifecycleHook | `core/middleware/base.py`, `core/lifecycle/base.py` |
+| 6 | **Observer** | ObservabilityProvider, Component Streaming | `core/observability/base.py`, `core/agent/agent.py` |
+| 7 | **Registry** | ToolRegistry, ComponentManager | `core/registry.py`, `core/component_manager.py` |
+| 8 | **Builder** | SystemPromptBuilder, LlmRequest Building | `core/system_prompt/`, `core/agent/agent.py` |
+| 9 | **Dependency Injection** | Agent Constructor, Tool Constructor | `core/agent/agent.py`, `tools/run_sql.py` |
+| 10 | **Composite** | ComponentTree, UiComponent | `core/component_manager.py`, `core/components.py` |
+
+---
+
+## Árvore de Diretórios Relevante
+
+```
+src/vanna/
+├── core/
+│   ├── agent/
+│   │   ├── agent.py              # DI, Observer, Chain of Responsibility
+│   │   └── config.py
+│   ├── tool/
+│   │   ├── base.py               # Template Method, Strategy
+│   │   └── models.py
+│   ├── llm/
+│   │   ├── base.py               # Strategy
+│   │   └── models.py             # Builder
+│   ├── storage/
+│   │   └── base.py               # Template Method
+│   ├── middleware/
+│   │   └── base.py               # Decorator/Chain
+│   ├── lifecycle/
+│   │   └── base.py               # Chain of Responsibility
+│   ├── workflow/
+│   │   ├── base.py               # Strategy
+│   │   └── default.py
+│   ├── system_prompt/
+│   │   ├── base.py               # Builder
+│   │   └── default.py
+│   ├── user/
+│   │   ├── resolver.py           # Strategy
+│   │   └── models.py
+│   ├── observability/
+│   │   └── base.py               # Observer
+│   ├── registry.py               # Registry
+│   ├── component_manager.py      # Registry, Composite
+│   └── components.py             # Composite
+├── integrations/
+│   ├── anthropic/
+│   │   └── llm.py                # Strategy Implementation
+│   ├── openai/
+│   │   └── llm.py                # Strategy Implementation
+│   └── local/
+│       └── conversation_store.py  # Template Method Implementation
+├── legacy/
+│   └── adapter.py                # Adapter
+├── tools/
+│   └── run_sql.py                # DI, Template Method
+└── components/
+    └── rich/
+        └── data/
+            └── dataframe.py      # Factory Method
+```
+
+---
+
+## Como Usar Este Documento para Validação com Hugging Face
+
+### Processo Recomendado
+
+1. **Escolha um padrão** (ex: Strategy Pattern)
+2. **Selecione uma estratégia** (ex: STRATEGY 1)
+3. **Copie os snippets na ordem especificada** para o modelo
+4. **Faça as questões fornecidas** após cada snippet
+5. **Compare a resposta do modelo** com as conclusões esperadas
+6. **Documente o resultado** com print screens ou transcrições
+
+### Exemplo de Input para o Modelo
+
+```
+Vou te fornecer snippets de código em sequência. Analise cada um e responda às questões.
+
+[SNIPPET 1]
+<código do snippet 1.1>
+
+Questão: Qual padrão de projeto está sendo implementado nesta classe abstrata?
+
+[SNIPPET 2]
+<código do snippet 1.2>
+
+[SNIPPET 3]
+<código do snippet 1.3>
+
+Questões:
+1. Estas duas classes implementam qual padrão de projeto em relação à interface abstrata anterior?
+2. Como o cliente pode trocar entre estas implementações sem modificar seu código?
+```
+
+### Validação Cruzada
+
+Para cada padrão, você tem múltiplas estratégias. Use-as para:
+- **Corroborar conclusões**: Se o modelo identifica Strategy em STRATEGY 1, 2 e 3, a conclusão é mais robusta
+- **Explorar aspectos diferentes**: Cada estratégia mostra o padrão de um ângulo diferente
+- **Documentar comprehensivamente**: Múltiplas evidências fortalecem seu trabalho acadêmico
+
+---
+
+# PARTE 2: PADRÕES ARQUITETURAIS
+
+## Diferença: Padrões de Projeto vs Padrões Arquiteturais
+
+### 🔧 Padrões de Projeto (Design Patterns)
+- **Escopo**: Nível de classes e objetos (micro/médio)
+- **Foco**: Resolver problemas específicos de design de código
+- **Impacto**: Local - afeta alguns componentes
+- **Exemplos**: Strategy, Observer, Factory
+- **Decisão**: Tomada por desenvolvedores durante implementação
+
+### 🏗️ Padrões Arquiteturais (Architectural Patterns)  
+- **Escopo**: Nível de sistema/aplicação completa (macro)
+- **Foco**: Estrutura geral e organização do sistema
+- **Impacto**: Global - afeta todo o sistema
+- **Exemplos**: Layered, Plugin, Event-Driven
+- **Decisão**: Tomada por arquitetos de software no design inicial
+
+---
+
+## 11. Plugin Architecture / Hexagonal Architecture
+
+### Definição
+Plugin Architecture (também conhecido como Hexagonal Architecture ou Ports and Adapters) define um core de aplicação isolado de detalhes externos através de interfaces, permitindo que diferentes implementações sejam "plugadas" sem modificar o core.
+
+### Onde Encontrar no Vanna
+
+**Estrutura:**
+```
+Core (Domain Logic)
+    ↓ Interfaces abstratas
+Adapters/Integrations (Implementations)
+```
+
+### STRATEGY 1: Core com Múltiplas Integrações
+
+**Ordem dos snippets**: Core abstrato → Múltiplos plugins → Registro dinâmico
+
+#### Snippet 1.1: Core Domain (Interfaces Abstratas)
+**Path**: `src/vanna/core/` (múltiplos arquivos)
+
+```python
+# Core define apenas interfaces - NÃO implementações concretas
+src/vanna/core/
+├── llm/base.py           # Interface para LLMs (Port)
+├── storage/base.py       # Interface para storage (Port)  
+├── user/resolver.py      # Interface para auth (Port)
+└── tool/base.py          # Interface para tools (Port)
+
+# Implementações ficam FORA do core
+src/vanna/integrations/
+├── anthropic/            # Plugin para Anthropic
+├── openai/               # Plugin para OpenAI
+├── postgres/             # Plugin para PostgreSQL
+├── sqlite/               # Plugin para SQLite
+└── local/                # Plugin para storage local
+```
+
+**Questão para o modelo**: "Como a organização de pastas demonstra Plugin Architecture? O que acontece no `core/` vs `integrations/`?"
+
+**deepseek-ai/deepseek-coder-6.7b-instruct**
+
+**microsoft/phi-2**
+
+
+#### Snippet 1.2: Exemplo de Plugin Concreto
+**Path**: `src/vanna/integrations/anthropic/llm.py`
+
+```python
+# src/vanna/integrations/anthropic/llm.py
+# Este arquivo É UM PLUGIN que se conecta à porta LlmService
+
+from vanna.core.llm import LlmService  # Importa a PORTA
+
+class AnthropicLlmService(LlmService):  # PLUGIN implementa a PORTA
+    """Plugin Anthropic - se conecta à porta LlmService."""
+    
+    def __init__(self, api_key: Optional[str] = None, **kwargs):
+        # Dependências específicas do Anthropic FICAM NO PLUGIN
+        import anthropic  # Biblioteca específica - NÃO está no core
+        self._client = anthropic.Anthropic(api_key=api_key)
+    
+    async def send_request(self, request: LlmRequest) -> LlmResponse:
+        # Implementação específica do Anthropic
+        resp = self._client.messages.create(...)
+        return LlmResponse(...)
+```
+
+#### Snippet 1.3: Outro Plugin para Mesma Porta
+**Path**: `src/vanna/integrations/openai/llm.py`
+
+```python
+# src/vanna/integrations/openai/llm.py  
+# OUTRO plugin para a MESMA porta LlmService
+
+from vanna.core.llm import LlmService  # Mesma PORTA
+
+class OpenAILlmService(LlmService):  # Outro PLUGIN
+    """Plugin OpenAI - se conecta à mesma porta LlmService."""
+    
+    def __init__(self, api_key: Optional[str] = None, **kwargs):
+        # Dependências específicas do OpenAI FICAM NO PLUGIN
+        from openai import OpenAI  # Biblioteca diferente
+        self._client = OpenAI(api_key=api_key)
+    
+    async def send_request(self, request: LlmRequest) -> LlmResponse:
+        # Implementação específica do OpenAI
+        resp = self._client.chat.completions.create(...)
+        return LlmResponse(...)
+```
+
+**Questões para o modelo**:
+1. "Como dois plugins diferentes (Anthropic e OpenAI) se conectam à mesma porta (LlmService)?"
+2. "Por que as dependências externas (`anthropic`, `openai`) estão nos plugins e não no core?"
+
+**deepseek-ai/deepseek-coder-6.7b-instruct**
+
+
+**microsoft/phi-2**
+
+
+#### Snippet 1.4: Core Usando a Porta (Hexagonal Architecture)
+**Path**: `src/vanna/core/agent/agent.py`
+
+```python
+# src/vanna/core/agent/agent.py
+class Agent:
+    """Core da aplicação - conhece apenas as PORTAS, não os PLUGINS."""
+    
+    def __init__(
+        self,
+        llm_service: LlmService,  # PORTA - interface abstrata
+        tool_registry: ToolRegistry,  # PORTA
+        user_resolver: UserResolver,  # PORTA
+        # ... outras portas
+    ):
+        # Core armazena referências às PORTAS
+        # Não sabe nem se importa qual PLUGIN está conectado
+        self.llm_service = llm_service
+        self.tool_registry = tool_registry
+        self.user_resolver = user_resolver
+    
+    async def _send_llm_request(self, request: LlmRequest) -> LlmResponse:
+        # Core usa a PORTA - qualquer PLUGIN que implementa a porta funciona
+        response = await self.llm_service.send_request(request)
+        # ^ Pode ser Anthropic, OpenAI, Ollama, Mock... Core não sabe nem liga!
+        return response
+```
+
+**Questão para o modelo**: "Como o Agent (core) demonstra o princípio Hexagonal Architecture de não depender de implementações concretas?"
+
+**deepseek-ai/deepseek-coder-6.7b-instruct**
+
+
+**microsoft/phi-2**
+
+
+---
+
+## 12. Layered Architecture (N-Tier)
+
+### Definição
+Layered Architecture organiza o sistema em camadas hierárquicas, onde cada camada tem responsabilidades específicas e só pode depender de camadas abaixo dela, nunca acima.
+
+### Camadas no Vanna
+
+```
+┌─────────────────────────────────┐
+│   Presentation Layer            │  Web Component, UI
+│   (User Interface)              │
+└─────────────────────────────────┘
+           ↓ depende
+┌─────────────────────────────────┐
+│   Application Layer             │  Agent, Workflow
+│   (Business Logic)              │  
+└─────────────────────────────────┘
+           ↓ depende
+┌─────────────────────────────────┐
+│   Domain Layer                  │  Tool, LLM, User
+│   (Core Entities)               │
+└─────────────────────────────────┘
+           ↓ depende
+┌─────────────────────────────────┐
+│   Infrastructure Layer          │  Integrations
+│   (External Systems)            │  (DB, APIs, Storage)
+└─────────────────────────────────┘
+```
+
+### STRATEGY 1: Identificação via Dependências entre Camadas
+
+#### Snippet 1.1: Infrastructure Layer (Camada Mais Baixa)
+**Path**: `src/vanna/integrations/sqlite/runner.py`
+
+```python
+# INFRASTRUCTURE LAYER - acesso direto a recursos externos
+# Esta camada NÃO depende das camadas acima
+
+from vanna.capabilities.sql_runner import SqlRunner  # Domain interface
+import sqlite3  # Dependência externa - biblioteca do sistema
+
+class SqliteRunner(SqlRunner):
+    """Infrastructure layer - acessa SQLite diretamente."""
+    
+    def __init__(self, database_path: str):
+        self.database_path = database_path
+        # Conexão direta com recurso externo (banco de dados)
+        self.connection = sqlite3.connect(database_path)
+    
+    async def run_sql(self, args, context):
+        # Execução direta contra infraestrutura externa
+        cursor = self.connection.cursor()
+        cursor.execute(args.sql)
+        return cursor.fetchall()
+```
+
+#### Snippet 1.2: Domain Layer (Camada de Domínio)
+**Path**: `src/vanna/core/tool/base.py`
+
+```python
+# DOMAIN LAYER - entidades e regras de negócio core
+# Depende apenas de abstrações, não de infraestrutura
+
+from abc import ABC, abstractmethod
+
+class Tool(ABC):
+    """Domain entity - define o conceito de Tool no domínio."""
+    
+    @abstractmethod
+    def name(self) -> str:
+        """Conceito do domínio: toda tool tem nome."""
+        pass
+    
+    @abstractmethod
+    async def execute(self, context, args) -> ToolResult:
+        """Regra do domínio: tools são executáveis."""
+        pass
+    
+    def get_schema(self) -> ToolSchema:
+        """Lógica de domínio: tools expõem seus schemas."""
+        return ToolSchema(
+            name=self.name,
+            description=self.description,
+            parameters=self.get_args_schema().model_json_schema()
+        )
+```
+
+#### Snippet 1.3: Application Layer (Camada de Aplicação)
+**Path**: `src/vanna/core/agent/agent.py` (linhas 83-141)
+
+```python
+# APPLICATION LAYER - orquestra o domínio para casos de uso
+# Depende do Domain Layer, não da Infrastructure
+
+class Agent:
+    """Application layer - orquestra tools, llm, storage para casos de uso."""
+    
+    def __init__(
+        self,
+        llm_service: LlmService,        # Domain abstraction
+        tool_registry: ToolRegistry,    # Domain abstraction  
+        user_resolver: UserResolver,    # Domain abstraction
+        conversation_store: ConversationStore,  # Domain abstraction
+    ):
+        # Application layer coordena abstrações do domínio
+        self.llm_service = llm_service
+        self.tool_registry = tool_registry
+        # NÃO referencia infraestrutura diretamente (sqlite3, anthropic, etc.)
+    
+    async def send_message(self, request_context, message):
+        """Caso de uso da aplicação: processar mensagem do usuário."""
+        # Orquestra múltiplas entidades do domínio
+        user = await self.user_resolver.resolve_user(request_context)
+        conversation = await self.conversation_store.get_conversation(conv_id, user)
+        tool_schemas = await self.tool_registry.get_schemas(user)
+        response = await self.llm_service.send_request(request)
+        # Esta é a lógica do CASO DE USO - coordena o domínio
+        return response
+```
+
+#### Snippet 1.4: Presentation Layer (Camada de Apresentação)
+**Path**: `src/vanna/servers/fastapi/routes.py`
+
+```python
+# PRESENTATION LAYER - interface com usuário/cliente
+# Depende do Application Layer (Agent)
+
+from fastapi import APIRouter, Request
+from vanna.core.agent import Agent  # Application layer
+
+router = APIRouter()
+
+@router.post("/api/vanna/v2/chat_sse")
+async def chat_sse(request: Request, agent: Agent):  # Injeta Application layer
+    """
+    Presentation layer - endpoint HTTP.
+    Converte requisição HTTP em chamada para Application layer.
+    """
+    # Extrai dados da requisição HTTP (concern da presentation)
+    request_context = RequestContext(
+        cookies=request.cookies,
+        headers=request.headers
+    )
+    message = await request.json()["message"]
+    
+    # Delega para Application layer - Agent
+    async for component in agent.send_message(request_context, message):
+        # Converte resposta do Application para formato HTTP (SSE)
+        yield component.model_dump_json()
+```
+
+**Questões para o modelo**:
+1. "Como as dependências fluem de cima para baixo nas camadas?"
+2. "Por que o Agent (Application) não importa `sqlite3` ou `anthropic` diretamente?"
+3. "Como Layered Architecture facilita trocar a Presentation de FastAPI para Flask?"
+
+**deepseek-ai/deepseek-coder-6.7b-instruct**
+
+
+**microsoft/phi-2**
+
+
+---
+
+## 13. Event-Driven Architecture / Reactive Streams
+
+### Definição
+Event-Driven Architecture estrutura o sistema em torno de produtores e consumidores de eventos, permitindo comunicação assíncrona e loosely coupled entre componentes.
+
+### Onde Encontrar no Vanna
+- **Component Streaming**: Agent produz eventos (UiComponents) que clientes consomem
+- **AsyncGenerator Pattern**: Implementação de event streams
+- **Observer Pattern em Escala**: Múltiplos observadores consumindo eventos
+
+### STRATEGY 1: Event Stream do Agent para UI
+
+#### Snippet 1.1: Event Producer (Agent)
+**Path**: `src/vanna/core/agent/agent.py` (linhas 143-167)
+
+```python
+# Event Producer - Agent gera stream de eventos assíncronos
+
+async def send_message(
+    self,
+    request_context: RequestContext,
+    message: str,
+    conversation_id: Optional[str] = None,
+) -> AsyncGenerator[UiComponent, None]:  # RETORNA STREAM DE EVENTOS
+    """
+    Agent atua como Event Producer.
+    Gera eventos (UiComponents) conforme processa a mensagem.
+    """
+    try:
+        # Evento 1: Status inicial
+        yield UiComponent(
+            rich_component=StatusBarUpdateComponent(
+                status="working",
+                message="Processing...",
+            )
+        )
+        
+        # Evento 2: Task iniciada
+        yield UiComponent(
+            rich_component=TaskTrackerUpdateComponent.add_task(context_task)
+        )
+        
+        # Evento 3: Tool executando
+        yield UiComponent(
+            rich_component=StatusCardComponent(
+                title=f"Executing {tool_call.name}",
+                status="running",
+            )
+        )
+        
+        # Evento 4: Resultado final
+        yield UiComponent(
+            rich_component=RichTextComponent(content=response.content)
+        )
+        
+        # Evento 5: Conclusão
+        yield UiComponent(
+            rich_component=StatusBarUpdateComponent(status="idle")
+        )
+    except Exception as e:
+        # Evento de erro
+        yield UiComponent(
+            rich_component=StatusCardComponent(
+                title="Error",
+                status="error",
+                description=str(e)
+            )
+        )
+```
+
+**Questão para o modelo**: "Como `AsyncGenerator[UiComponent, None]` implementa Event-Driven Architecture? Qual é o evento?"
+
+**deepseek-ai/deepseek-coder-6.7b-instruct**
+
+
+**microsoft/phi-2**
+
+
+#### Snippet 1.2: Event Consumer (FastAPI Server)
+**Path**: `src/vanna/servers/fastapi/routes.py`
+
+```python
+# Event Consumer - Server consome eventos do Agent e transmite via SSE
+
+from fastapi.responses import StreamingResponse
+
+@router.post("/api/vanna/v2/chat_sse")
+async def chat_sse_endpoint(request: ChatRequest, agent: Agent):
+    """
+    Event Consumer - consome eventos do Agent e repassa ao cliente.
+    Implementa Server-Sent Events (SSE) para comunicação real-time.
+    """
+    
+    async def event_stream():
+        """Transforma AsyncGenerator em SSE stream."""
+        try:
+            # Consome eventos do Producer (Agent)
+            async for ui_component in agent.send_message(
+                request_context=request.context,
+                message=request.message,
+                conversation_id=request.conversation_id
+            ):
+                # Para cada evento recebido, envia ao cliente via SSE
+                event_data = ui_component.model_dump_json()
+                
+                # Formato SSE: data: {json}\n\n
+                yield f"data: {event_data}\n\n"
+                
+        except Exception as e:
+            # Evento de erro também é transmitido
+            error_data = {"error": str(e), "type": "error"}
+            yield f"data: {json.dumps(error_data)}\n\n"
+    
+    # Retorna StreamingResponse - mantém conexão aberta
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        }
+    )
+```
+
+**Questões para o modelo**:
+1. "Como o servidor atua como um intermediário no Event-Driven Architecture?"
+2. "Por que `StreamingResponse` é necessário para este padrão?"
+
+**deepseek-ai/deepseek-coder-6.7b-instruct**
+
+
+**microsoft/phi-2**
+
+
+---
+
+## 14. Middleware/Pipeline Architecture
+
+### Definição
+Pipeline Architecture processa dados através de uma sequência de estágios (pipes) onde cada estágio transforma os dados e passa para o próximo, formando um pipeline de processamento.
+
+### Onde Encontrar no Vanna
+- **LlmMiddleware Chain**: Pipeline de pré/pós-processamento de requests LLM
+- **LifecycleHook Chain**: Pipeline de hooks em diferentes fases
+- **ConversationFilter Chain**: Pipeline de filtros para mensagens
+
+### STRATEGY 1: LLM Request Pipeline
+
+#### Snippet 1.1: Pipeline Processing
+**Path**: `src/vanna/core/agent/agent.py` (linhas 1242-1314)
+
+```python
+# Pipeline Architecture - Request passa por múltiplos estágios
+
+async def _send_llm_request(self, request: LlmRequest) -> LlmResponse:
+    """
+    Pipeline de processamento de LLM request.
+    Request passa por: Middlewares → LLM → Middlewares
+    """
+    
+    # STAGE 1: Before Pipeline - cada middleware transforma o request
+    for middleware in self.llm_middlewares:
+        # Request entra no estágio, sai (potencialmente) transformado
+        request = await middleware.before_llm_request(request)
+        # Output de um estágio é input do próximo
+    
+    # STAGE 2: Core Processing - enviar ao LLM
+    response = await self.llm_service.send_request(request)
+    
+    # STAGE 3: After Pipeline - cada middleware transforma o response  
+    for middleware in self.llm_middlewares:
+        # Response passa por transformações em sequência
+        response = await middleware.after_llm_response(request, response)
+    
+    return response
+    # Response passou por: LLM → Middleware 1 → Middleware 2 → ... → Middleware N
+```
+
+**Questão para o modelo**: "Como este código implementa Pipeline Architecture? O que são os 'pipes' e o que flui por eles?"
+
+**deepseek-ai/deepseek-coder-6.7b-instruct**
+
+**microsoft/phi-2**
+
+#### Snippet 1.2: Pipeline Stage Implementation
+**Path**: `README.md` - Middleware Example
+
+```python
+# Exemplo de um estágio (pipe) no pipeline
+
+class CachingMiddleware(LlmMiddleware):
+    """Um estágio no pipeline que adiciona caching."""
+    
+    def __init__(self):
+        self.cache = {}
+    
+    async def before_llm_request(self, request: LlmRequest) -> LlmRequest:
+        """
+        BEFORE PIPE - check cache antes de enviar ao LLM.
+        Pode short-circuit o pipeline se encontrar no cache.
+        """
+        cache_key = self._compute_key(request)
+        if cache_key in self.cache:
+            # Short-circuit: não precisa ir ao LLM
+            return self.cache[cache_key]
+        
+        # Pass through - request continua pelo pipeline
+        return request
+    
+    async def after_llm_response(
+        self, 
+        request: LlmRequest, 
+        response: LlmResponse
+    ) -> LlmResponse:
+        """
+        AFTER PIPE - cache response depois de receber do LLM.
+        Response transformado continua pelo pipeline.
+        """
+        cache_key = self._compute_key(request)
+        self.cache[cache_key] = response
+        
+        # Pass through - response continua para próximo middleware
+        return response
+
+class LoggingMiddleware(LlmMiddleware):
+    """Outro estágio - logging independente de caching."""
+    
+    async def before_llm_request(self, request: LlmRequest) -> LlmRequest:
+        """BEFORE PIPE - log request."""
+        logger.info(f"LLM Request: {request.messages[-1].content}")
+        return request  # Não transforma, apenas observa
+    
+    async def after_llm_response(
+        self, 
+        request: LlmRequest, 
+        response: LlmResponse
+    ) -> LlmResponse:
+        """AFTER PIPE - log response."""
+        logger.info(f"LLM Response: {response.content}")
+        return response  # Pass through
+
+# Composição do pipeline
+agent = Agent(
+    llm_service=llm,
+    llm_middlewares=[
+        LoggingMiddleware(),    # Primeiro log
+        CachingMiddleware(),    # Depois cache
+    ]
+)
+```
+
+**Questão para o modelo**: "Como múltiplos middlewares podem ser compostos em um pipeline? A ordem importa?"
+
+**deepseek-ai/deepseek-coder-6.7b-instruct**
+
+
+**microsoft/phi-2**
+
+
+---
+
+## Resumo: Padrões Arquiteturais vs Padrões de Projeto
+
+| Aspecto | Padrões de Projeto | Padrões Arquiteturais |
+|---------|-------------------|---------------------|
+| **Escopo** | Classes/Objetos | Sistema Completo |
+| **Granularidade** | Micro/Médio | Macro |
+| **Exemplo Vanna (Projeto)** | Strategy (LlmService), Observer (ObservabilityProvider) | Plugin Architecture (integrations/), Layered (core → integrations) |
+| **Exemplo Vanna (Arquitetura)** | N/A | Event-Driven (AsyncGenerator streams), Pipeline (Middleware chain) |
+| **Quando Decidir** | Durante implementação | Durante design inicial |
+| **Quem Decide** | Desenvolvedores | Arquitetos |
+| **Impacto de Mudança** | Local (alguns arquivos) | Global (reestruturação) |
+| **Testabilidade** | Unit tests | Integration/System tests |
+
+---
+
+## Como o Vanna Combina Ambos
+
+O Vanna é um exemplo excelente de sistema que usa **padrões de projeto** para implementar **padrões arquiteturais**:
+
+### Plugin Architecture (Arquitetural)
+- **Implementado com**: Strategy Pattern (Projeto), Dependency Injection (Projeto), Adapter Pattern (Projeto)
+- **Resultado**: Core isolado de implementações específicas
+
+### Layered Architecture (Arquitetural)
+- **Implementado com**: Abstract Factory (Projeto), Template Method (Projeto)
+- **Resultado**: Separação clara entre Infrastructure, Domain, Application, Presentation
+
+### Event-Driven Architecture (Arquitetural)
+- **Implementado com**: Observer Pattern (Projeto), Iterator/Generator Pattern (Projeto)
+- **Resultado**: UI reativa com atualizações em tempo real
+
+### Pipeline Architecture (Arquitetural)
+- **Implementado com**: Chain of Responsibility (Projeto), Decorator Pattern (Projeto)
+- **Resultado**: Processamento extensível e composável
+
+---
+
+**Fim da Análise - Parte 2: Padrões Arquiteturais**
+
+
