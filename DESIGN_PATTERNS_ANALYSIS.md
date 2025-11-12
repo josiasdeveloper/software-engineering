@@ -19,7 +19,6 @@
 7. [Registry Pattern](#7-registry-pattern)
 8. [Builder Pattern](#8-builder-pattern)
 9. [Dependency Injection](#9-dependency-injection)
-10. [Composite Pattern](#10-composite-pattern)
 
 ---
 
@@ -140,7 +139,7 @@ class OpenAILlmService(LlmService):
         
         return LlmResponse(content=content, tool_calls=tool_calls or None)
 ```
-**Questões para  o modelo**
+**Questões para o modelo**
 
 1. "Estas duas classes implementam qual padrão de projeto em relação à interface abstrata anterior?"
 2. "Como o cliente pode trocar entre estas implementações sem modificar seu código?"
@@ -576,7 +575,7 @@ class ConversationStore(ABC):
         pass
 ```
 
-#
+---
 
 ## 3. Abstract Factory Pattern
 
@@ -1407,6 +1406,10 @@ class DefaultSystemPromptBuilder(SystemPromptBuilder):
 
 **Questão para o modelo**: "Como SystemPromptBuilder usa Builder Pattern para construir prompts complexos incrementalmente?"
 
+**deepseek-ai/deepseek-coder-6.7b-instruct**
+Sim, o padrão de projeto Builder é usado nesse código pela implementação da classe DefaultSystemPromptBuilder que cria um sistema de prompt com os usuários e ferramentas em partes incrementais. Isso permite gerar cada parte do prompt separadamente antes de juntá-las todas numa �nica saída final. Essa estrutura facilita na adição ou remoção de partes específicas sem alterar significativamente o restante do processo de construção. A função build_system_prompt pode ser chamada várias vezes durante o ciclo de vida do objeto, permitindo que seja feito progressivamente a construção completa do prompt. Por exemplo, você poderia começar com apenas alguns elementos básicos do prompt e posteriormente acrescentando mais conforme necessário. O padrão de projeto também torna possível a extensibilidade futura, pois permite adicionar novos tipos de partes ao construtor sem modificar a lógica principal de seu funcionamento.
+
+
 #### Snippet 1.3: Builder em Uso
 **Path**: `src/vanna/core/agent/agent.py` (linhas 593-637)
 
@@ -1434,83 +1437,14 @@ if self.llm_context_enhancer and system_prompt is not None:
 
 **Questão para o modelo**: "Como o Agent usa o Builder Pattern para construir prompts em múltiplas etapas?"
 
----
+**deepseek-ai/deepseek-coder-6.7b-instruct**
+Na versão atualizada do código, o agente utiliza o Padrão de Projeto Builder para construir prompts em duas etapas principais. Primeiro, ele utiliza o método 'build_system_prompt' da instância 'self.system_prompt_builder' para construir o próprio prompt de sistema usando informaç�es sobre o usuário e ferramentas disponíveis. Em seguida, caso haja um 'self.llm_context_enhancer', ele usará esse componente para melhorar o prompt de sistema inicial adicionando conte�do extra relacionado à conversa em curso ('message') e detalhes do usuário. Como resultado, este segundo passo adicional proporciona a capacidade de customizar o prompt final utilizando outro construtor como um mecanismo intermediário entre a obtenção das informaç�es originais e sua incorporação ao prompt final. É importante destacar que essa organização facilitou futuramente a introduzir novos tipos de melhoria de prompt sem alterar a lógica fundamental da geração dos prompts existentes, respeitando assim os princípios SOLID da Programação Orientada a Objetos.
 
-### STRATEGY 2: Identificação via LlmRequest Building
 
-**Ordem dos snippets**: Estrutura do Request → Método de construção → Processo incremental
 
-#### Snippet 2.1: LlmRequest Structure
-**Path**: `src/vanna/core/llm/models.py`
-
-```python
-# src/vanna/core/llm/models.py
-from pydantic import BaseModel
-
-class LlmRequest(BaseModel):
-    """Request to LLM service - Complex object built incrementally."""
-    messages: List[LlmMessage]
-    tools: Optional[List[ToolSchema]] = None
-    user: Optional[User] = None
-    temperature: Optional[float] = None
-    max_tokens: Optional[int] = None
-    stream: bool = False
-    system_prompt: Optional[str] = None
-```
-
-#### Snippet 2.2: Builder Method
-**Path**: `src/vanna/core/agent/agent.py` (linhas 1161-1240)
-
-```python
-# src/vanna/core/agent/agent.py
-async def _build_llm_request(
-    self,
-    conversation: Conversation,
-    tool_schemas: List[ToolSchema],
-    user: User,
-    system_prompt: Optional[str] = None,
-) -> LlmRequest:
-    """Build LLM request from conversation and tools - BUILDER PATTERN."""
-    
-    # Step 1: Apply conversation filters
-    filtered_messages = conversation.messages
-    for filter in self.conversation_filters:
-        filtered_messages = await filter.filter_messages(filtered_messages)
-    
-    # Step 2: Convert to LLM messages
-    messages = []
-    for msg in filtered_messages:
-        llm_msg = LlmMessage(
-            role=msg.role,
-            content=msg.content,
-            tool_calls=msg.tool_calls,
-            tool_call_id=msg.tool_call_id,
-        )
-        messages.append(llm_msg)
-    
-    # Step 3: Enhance messages with LLM context enhancer
-    if self.llm_context_enhancer:
-        messages = await self.llm_context_enhancer.enhance_user_messages(
-            messages, user
-        )
-    
-    # Step 4: Build final request object
-    return LlmRequest(
-        messages=messages,
-        tools=tool_schemas if tool_schemas else None,
-        user=user,
-        temperature=self.config.temperature,
-        max_tokens=self.config.max_tokens,
-        stream=self.config.stream_responses,
-        system_prompt=system_prompt,
-    )
-```
-
-**Questões para o modelo**:
-1. "Como `_build_llm_request` implementa Builder Pattern?"
-2. "Quantos passos de construção você identifica neste builder?"
 
 ---
+
 
 ## 9. Dependency Injection
 
@@ -1576,6 +1510,10 @@ class Agent:
 1. "Quantas dependências são injetadas no Agent?"
 2. "Por que isso é Dependency Injection e não criação direta?"
 
+**deepseek-ai/deepseek-coder-6.7b-instruct**
+Esta é uma forma clara de injeção de dependência. A partir daqui, esse Objeto recebeu automaticamente todos os recursos necessários para operar e ele nunca precisou criar esses objetos sozinho(a). Tudo o que acontece aqui é justamente delegar a criação e gerenciamento desses objetos ao processo externo, facilitando assim o encapsulamento dos componentes internos da classe Agent, além de proporcionar maior isolamento entre eles. Este patamar de separação dos conhecimentos entre as entidades facilita tanto a manutenção quanto a evolução do sistema.
+
+
 #### Snippet 1.2: Usando Dependências Injetadas
 **Path**: `src/vanna/core/agent/agent.py` (linhas 258-262, 571-576)
 
@@ -1598,25 +1536,10 @@ conversation = await self.conversation_store.get_conversation(
 
 **Questão para o modelo**: "Como o Agent usa suas dependências injetadas sem conhecer suas implementações concretas?"
 
-#### Snippet 1.3: Exemplo de Injeção (do README)
-**Path**: `README.md` - Basic Example
+**deepseek-ai/deepseek-coder-6.7b-instruct**
+As dependências injetadas são usadas através de atributos da classe. Neste caso, a instância desejada de cada interface foi injetada antes durante o setup inicial da classe Agent e guardada num campo da própria classe. Quando necessário usar essas funcionalidades, basta referenciar esses atributos da classe. Eles não precisam ser recriados dentro do método onde são utilizados; a ligação é feita por meio de referência previamente estabelecida. Dessa forma, a classe Agent sabe apenas sobre um conjunto limitado de APIs (interfaces) e não precisa saber detalhes de implementação dessas APIs. Esse tipo de organização permite grande flexibilidade, pois você pode passar diferentes implementaç�es de serviços para a classe Agent a qualquer momento, desde que sigam a interface esperada. Você só precisa mudar os atributos da classe onde estas implementaç�es são armazenadas, sem afetar todo o restante do código que utiliza essas dependências. Embora este exemplo mostre simplesmente utilizar os metodos dessas propriedades, existem casos complexos onde seria necessario executar alguns comportamentos antes de realizar a chamada real (ex.: registra log, valida usuario, etc.). Entretanto, isto deixaria claro que a intenção original era seguir o principio da Inversão de Controlo (Inversion Control, IoC), ou seja, deixar a criação das dependencias para fora da classe e decidir quais instancias serão utilizadas via injecao de dependencia.
 
-```python
-# README.md
-# Setting up dependencies BEFORE creating Agent - DEPENDENCY INJECTION
-llm = AnthropicLlmService(model="claude-sonnet-4-5")
-tools = ToolRegistry()
-tools.register(RunSqlTool(sql_runner=SqliteRunner(database_path="./data.db")))
 
-# Injecting all dependencies into Agent
-agent = Agent(
-    llm_service=llm,  # DI: injecting LLM implementation
-    tool_registry=tools,  # DI: injecting tool registry
-    user_resolver=SimpleUserResolver()  # DI: injecting user resolver
-)
-```
-
-**Questão para o modelo**: "Como este código demonstra Dependency Injection? Qual o benefício para testes?"
 
 ---
 
@@ -1655,179 +1578,10 @@ class RunSqlTool(Tool[RunSqlToolArgs]):
 1. "Por que RunSqlTool não cria seu próprio SqlRunner?"
 2. "Como a injeção de SqlRunner facilita trocar de banco de dados?"
 
-#### Snippet 2.2: Múltiplas Implementações de SqlRunner
-**Path**: `src/vanna/integrations/sqlite/runner.py` e `README.md`
+**deepseek-ai/deepseek-coder-6.7b-instruct**
+O primeiro código é uma classe chamada RunSqlTool no Python e ela está sendo inicializada com dois parâmetros opcionais: um objeto da interface SqlRunner e um objeto FileSystem opcional. Aqui estamos usando o padrão de projeto 'Injeção de Dependência' conhecido como um Design Pattern Gang of Four. Este padrão permite que os objetos dependentes sejam passados em vez de ser criado dentro dos métodos necessários. Neste caso, o método 'execute', especificamente, não precisa mais criar um objeto SqlRunner. Em vez disso, ele utiliza o objeto recebido por meio da dependência Injetada. Isto tornaria muito fácil alterar ou testar a lógica do banco de dados sem mudar grande parte do código principal. Isso seria especialmente importante quando você tiver diversos lugares onde você executa consultas SQL e deseja poder escolher entre diferentes implementaç�es de gerenciamento de BD sem ter que modificar vários locais de código.
 
-```python
-# Different SqlRunner implementations can be injected
 
-# SQLite implementation
-from vanna.integrations.sqlite import SqliteRunner
-sql_tool = RunSqlTool(sql_runner=SqliteRunner(database_path="./data.db"))
-
-# PostgreSQL implementation (example)
-from vanna.integrations.postgres import PostgresRunner
-sql_tool = RunSqlTool(sql_runner=PostgresRunner(connection_string="postgresql://..."))
-
-# BigQuery implementation (example)
-from vanna.integrations.bigquery import BigQueryRunner
-sql_tool = RunSqlTool(sql_runner=BigQueryRunner(project_id="my-project"))
-```
-
-**Questão para o modelo**: "Como Dependency Injection permite trocar implementações de banco de dados sem modificar RunSqlTool?"
-
----
-
-## 10. Composite Pattern
-
-### Definição
-O padrão Composite compõe objetos em estruturas de árvore para representar hierarquias parte-todo. Composite permite que clientes tratem objetos individuais e composições de objetos uniformemente.
-
-### Onde Encontrar no Vanna
-- **ComponentTree**: Hierarquia de componentes UI
-- **Message/Conversation Structure**: Mensagens compostas
-- **UiComponent**: Composto de Rich e Simple components
-
-### STRATEGY 1: Identificação via ComponentTree
-
-**Ordem dos snippets**: Estrutura do Composite → Nó do Composite → Operações recursivas
-
-#### Snippet 1.1: ComponentNode (Composite Node)
-**Path**: `src/vanna/core/component_manager.py` (linhas 58-91)
-
-```python
-# src/vanna/core/component_manager.py
-class ComponentNode(BaseModel):
-    """Node in the component tree - COMPOSITE PATTERN."""
-
-    component: RichComponent  # The component itself
-    children: List["ComponentNode"] = Field(default_factory=list)  # CHILDREN in composite
-    parent_id: Optional[str] = None
-
-    def find_child(self, component_id: str) -> Optional["ComponentNode"]:
-        """Find a child node by component ID - RECURSIVE OPERATION."""
-        for child in self.children:
-            if child.component.id == component_id:
-                return child
-            # Recursively search in children - COMPOSITE PATTERN
-            found = child.find_child(component_id)
-            if found:
-                return found
-        return None
-
-    def remove_child(self, component_id: str) -> bool:
-        """Remove a child component by ID - RECURSIVE OPERATION."""
-        for i, child in enumerate(self.children):
-            if child.component.id == component_id:
-                self.children.pop(i)
-                return True
-            # Recursively remove from children - COMPOSITE PATTERN
-            if child.remove_child(component_id):
-                return True
-        return False
-
-    def get_all_ids(self) -> Set[str]:
-        """Get all component IDs in this subtree - RECURSIVE OPERATION."""
-        ids = {self.component.id}
-        for child in self.children:
-            ids.update(child.get_all_ids())  # Recursively collect - COMPOSITE PATTERN
-        return ids
-```
-
-**Questões para o modelo**:
-1. "Como ComponentNode implementa Composite Pattern?"
-2. "Quais operações são recursivas e tratam toda a hierarquia?"
-
-#### Snippet 1.2: ComponentTree (Composite Structure)
-**Path**: `src/vanna/core/component_manager.py` (linhas 93-183)
-
-```python
-# src/vanna/core/component_manager.py
-class ComponentTree(BaseModel):
-    """Hierarchical structure for managing component layout - COMPOSITE STRUCTURE."""
-
-    root: Optional[ComponentNode] = None  # Root of the composite tree
-    flat_index: Dict[str, ComponentNode] = Field(default_factory=dict)
-
-    def add_component(
-        self, component: RichComponent, position: Optional[Position] = None
-    ) -> ComponentUpdate:
-        """Add a component to the tree."""
-        node = ComponentNode(component=component)
-        self.flat_index[component.id] = node
-
-        if self.root is None:
-            self.root = node
-        else:
-            # Adding to composite structure
-            parent_node = self._find_parent(position)
-            if parent_node is not None:
-                node.parent_id = parent_node.component.id
-                parent_node.children.append(node)  # Adding child to composite
-
-        return ComponentUpdate(...)
-
-    def remove_component(self, component_id: str) -> Optional[ComponentUpdate]:
-        """Remove a component and its children - TREATING WHOLE COMPOSITE."""
-        node = self.flat_index.get(component_id)
-        if not node:
-            return None
-
-        # Remove from parent
-        if self.root and self.root.component.id == component_id:
-            self.root = None
-        else:
-            if self.root:
-                self.root.remove_child(component_id)  # Recursive removal in composite
-
-        # Remove from flat index (including all children)
-        removed_ids = node.get_all_ids()  # Getting entire subtree
-        for removed_id in removed_ids:
-            self.flat_index.pop(removed_id, None)
-
-        return ComponentUpdate(...)
-```
-
-**Questão para o modelo**: "Como ComponentTree demonstra Composite Pattern ao tratar nós individuais e hierarquias uniformemente?"
-
----
-
-### STRATEGY 2: Identificação via UiComponent Composition
-
-**Ordem dos snippets**: Componente composto → Criação → Uso recursivo
-
-#### Snippet 2.1: UiComponent como Composite
-**Path**: `src/vanna/core/components.py`
-
-```python
-# src/vanna/core/components.py
-class UiComponent(BaseModel):
-    """Base class for UI components - COMPOSITE with Rich and Simple parts."""
-    
-    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
-    rich_component: Any  # PART 1 of composite
-    simple_component: Optional[Any] = None  # PART 2 of composite
-
-    @model_validator(mode="after")
-    def validate_components(self) -> "UiComponent":
-        """Validate that components are the correct types."""
-        from .rich_component import RichComponent
-        from .simple_component import SimpleComponent
-
-        if not isinstance(self.rich_component, RichComponent):
-            raise ValueError(f"rich_component must be a RichComponent")
-
-        if self.simple_component is not None and not isinstance(
-            self.simple_component, SimpleComponent
-        ):
-            raise ValueError(f"simple_component must be a SimpleComponent")
-
-        return self
-```
-
-**Questão para o modelo**: "Como UiComponent é um Composite de RichComponent e SimpleComponent?"
-
----
 
 ## Resumo dos Padrões Identificados
 
@@ -1841,102 +1595,6 @@ class UiComponent(BaseModel):
 | 6 | **Observer** | ObservabilityProvider, Component Streaming | `core/observability/base.py`, `core/agent/agent.py` |
 | 7 | **Registry** | ToolRegistry, ComponentManager | `core/registry.py`, `core/component_manager.py` |
 | 8 | **Builder** | SystemPromptBuilder, LlmRequest Building | `core/system_prompt/`, `core/agent/agent.py` |
-| 9 | **Dependency Injection** | Agent Constructor, Tool Constructor | `core/agent/agent.py`, `tools/run_sql.py` |
-| 10 | **Composite** | ComponentTree, UiComponent | `core/component_manager.py`, `core/components.py` |
-
----
-
-## Árvore de Diretórios Relevante
-
-```
-src/vanna/
-├── core/
-│   ├── agent/
-│   │   ├── agent.py              # DI, Observer, Chain of Responsibility
-│   │   └── config.py
-│   ├── tool/
-│   │   ├── base.py               # Template Method, Strategy
-│   │   └── models.py
-│   ├── llm/
-│   │   ├── base.py               # Strategy
-│   │   └── models.py             # Builder
-│   ├── storage/
-│   │   └── base.py               # Template Method
-│   ├── middleware/
-│   │   └── base.py               # Decorator/Chain
-│   ├── lifecycle/
-│   │   └── base.py               # Chain of Responsibility
-│   ├── workflow/
-│   │   ├── base.py               # Strategy
-│   │   └── default.py
-│   ├── system_prompt/
-│   │   ├── base.py               # Builder
-│   │   └── default.py
-│   ├── user/
-│   │   ├── resolver.py           # Strategy
-│   │   └── models.py
-│   ├── observability/
-│   │   └── base.py               # Observer
-│   ├── registry.py               # Registry
-│   ├── component_manager.py      # Registry, Composite
-│   └── components.py             # Composite
-├── integrations/
-│   ├── anthropic/
-│   │   └── llm.py                # Strategy Implementation
-│   ├── openai/
-│   │   └── llm.py                # Strategy Implementation
-│   └── local/
-│       └── conversation_store.py  # Template Method Implementation
-├── legacy/
-│   └── adapter.py                # Adapter
-├── tools/
-│   └── run_sql.py                # DI, Template Method
-└── components/
-    └── rich/
-        └── data/
-            └── dataframe.py      # Factory Method
-```
-
----
-
-## Como Usar Este Documento para Validação com Hugging Face
-
-### Processo Recomendado
-
-1. **Escolha um padrão** (ex: Strategy Pattern)
-2. **Selecione uma estratégia** (ex: STRATEGY 1)
-3. **Copie os snippets na ordem especificada** para o modelo
-4. **Faça as questões fornecidas** após cada snippet
-5. **Compare a resposta do modelo** com as conclusões esperadas
-6. **Documente o resultado** com print screens ou transcrições
-
-### Exemplo de Input para o Modelo
-
-```
-Vou te fornecer snippets de código em sequência. Analise cada um e responda às questões.
-
-[SNIPPET 1]
-<código do snippet 1.1>
-
-Questão: Qual padrão de projeto está sendo implementado nesta classe abstrata?
-
-[SNIPPET 2]
-<código do snippet 1.2>
-
-[SNIPPET 3]
-<código do snippet 1.3>
-
-Questões:
-1. Estas duas classes implementam qual padrão de projeto em relação à interface abstrata anterior?
-2. Como o cliente pode trocar entre estas implementações sem modificar seu código?
-```
-
-### Validação Cruzada
-
-Para cada padrão, você tem múltiplas estratégias. Use-as para:
-- **Corroborar conclusões**: Se o modelo identifica Strategy em STRATEGY 1, 2 e 3, a conclusão é mais robusta
-- **Explorar aspectos diferentes**: Cada estratégia mostra o padrão de um ângulo diferente
-- **Documentar comprehensivamente**: Múltiplas evidências fortalecem seu trabalho acadêmico
 
 ---
 
@@ -1951,7 +1609,7 @@ Para cada padrão, você tem múltiplas estratégias. Use-as para:
 - **Exemplos**: Strategy, Observer, Factory
 - **Decisão**: Tomada por desenvolvedores durante implementação
 
-### 🏗️ Padrões Arquiteturais (Architectural Patterns)  
+### 🏗️ Padrões Arquiteturais (Architectural Patterns)
 - **Escopo**: Nível de sistema/aplicação completa (macro)
 - **Foco**: Estrutura geral e organização do sistema
 - **Impacto**: Global - afeta todo o sistema
@@ -2562,5 +2220,3 @@ O Vanna é um exemplo excelente de sistema que usa **padrões de projeto** para 
 ---
 
 **Fim da Análise - Parte 2: Padrões Arquiteturais**
-
-
