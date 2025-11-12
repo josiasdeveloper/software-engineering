@@ -790,20 +790,21 @@ class LegacyVannaAdapter(ToolRegistry, AgentMemory):
 **Questões para o modelo**:
 1. "Como LegacyVannaAdapter implementa o Adapter Pattern?"
 
-    **deepseek-ai/deepseek-coder-6.7b-instruct**
+**deepseek-ai/deepseek-coder-6.7b-instruct**
 *O padrão de projeto Adapter é um padrão estrutural que permite objetos com interfaces incompatíveis trabalharem juntos sem afetar clientes que os utilizam. Neste caso específico, a classe `LegacyVannaAdapter` mostra como se encaixa na descrição desse padrão. Ela faz uso da linguagem Python e do princípio da herança m�ltipla para permitir que ela adapte a duas classes diferentes, `ToolRegistry` e `AgentMemory`, embora sua real finalidade esteja em adaptar uma interface antiga (`VannaBase`) à nova (que agora inclui os métodos necessários por `AgentMemory`). Isso torna possível que `LegacyVannaAdapter` atenda tanto às necessidades da `ToolRegistry` quanto às necessidades da `AgentMemory`. Essencialmente, ele está convertendo a interface de `VannaBase` para algo mais adequado para ser usada pelas novas APIs de registro de ferramentas e armazenamento de memória dos agentes. Portanto, `LegacyVannaAdapter` segue corretamente todos os critérios do padrão Adapter.*
 
-    **microsoft/phi-2**
+**microsoft/phi-2**
 *The `LegacyVannaAdapter` implements the Adapter Pattern by wrapping a legacy `VannaBase` object and translating its old interface into the new interfaces expected by Vanna 2.0+ (`ToolRegistry` and `AgentMemory`). The adapter inherits from both target interfaces, providing implementations that delegate to the legacy object's methods. For example, `save_tool_usage()` (new interface) calls `vn.add_question_sql()` (old interface). The adapter acts as a bridge between incompatible interfaces, allowing old code to work with the new architecture without modification. This is particularly valuable during migration periods - users can keep using their existing `VannaBase` subclasses while gradually transitioning to the new system. The adapter handles the impedance mismatch between synchronous legacy methods and asynchronous new methods, between old data formats and new model objects, and between different conceptual models (SQL pairs vs tool usage patterns).*
 
 
 2. "Quais são as diferenças entre as interfaces antiga (VannaBase) e nova (AgentMemory)?"
 
-    **deepseek-ai/deepseek-coder-6.7b-instruct**
-    *Antiga Interface: Executava consultas SQL diretamente.*
-    *Nova Interface: Gerencia padrões de uso de ferramentas.*
+**deepseek-ai/deepseek-coder-6.7b-instruct**
+*Antiga Interface: Executava consultas SQL diretamente.*
+*Nova Interface: Gerencia padrões de uso de ferramentas.*
     
-    **microsoft/phi-2**
+**microsoft/phi-2**
+
 *The old `VannaBase` interface was designed around SQL-specific operations: `add_question_sql(question, sql)` for storing question-SQL pairs, `get_similar_question_sql(question)` for retrieval, and `run_sql(sql)` for execution. It was synchronous, tightly coupled to SQL, and had a narrow focus. The new `AgentMemory` interface is more generic and modern: `save_tool_usage(question, tool_name, args, context, success)` stores ANY tool usage (not just SQL), `search_similar_usage(question, context, limit)` retrieves patterns with rich metadata (similarity scores, rankings), and everything is asynchronous. The new interface also includes context awareness (user permissions, tool permissions), structured data models (Pydantic), and better separation of concerns. The Adapter Pattern bridges these differences by mapping old concepts to new ones: SQL pairs become tool usage records, old synchronous calls become async, and simple lists become structured search results. This allows legacy systems to participate in the new architecture without rewriting.*
 
 ---
