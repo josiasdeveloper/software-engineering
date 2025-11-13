@@ -1,147 +1,92 @@
-# Code Analysis - Design Pattern Detection
+# Code Analysis - Automated Pattern Detection
 
-Automated detection of design patterns in codebases using Large Language Models.
+⚠️ **WORK IN PROGRESS** - Esta ferramenta está em desenvolvimento e **não foi concluída**.
 
-## Overview
+## 🎯 Objetivo
 
-This tool analyzes a given repository and identifies implementation of software design patterns (Gang of Four patterns) using a pre-trained LLM. It runs in Google Colab to leverage free GPU acceleration.
+Ferramenta automatizada para detectar padrões de projeto em codebases usando LLMs. O objetivo é automatizar o processo de análise que foi feito manualmente para o projeto do Vanna 2.0+.
 
-## How It Works
+## ⚠️ Status Atual
 
-The analysis runs in three phases:
+**Não concluído.** A análise do Vanna 2.0+ foi realizada manualmente usando a ferramenta `manual-analysis/`, que permitiu análise interativa e controle fino sobre as perguntas feitas aos modelos.
 
-1. **Phase 1: Directory Tree** - Maps the codebase structure and identifies source files
-2. **Phase 2: File Summaries** - Uses LLM to generate brief descriptions of each file
-3. **Phase 3: Pattern Analysis** - Combines all context to detect design patterns
+## 💡 Motivação
 
-## Installation
+A ideia inicial era criar uma ferramenta que:
+1. Clona repositórios automaticamente
+2. Gera árvore de diretórios
+3. Usa LLM para resumir arquivos
+4. Detecta padrões de projeto automaticamente
+
+No entanto, durante o desenvolvimento do projeto, descobrimos que a análise manual oferecia:
+- **Melhor controle** sobre quais padrões investigar
+- **Perguntas mais específicas** e contextualizadas
+- **Validação mais precisa** através de múltiplas estratégias
+- **Resultados de maior qualidade** para documentação
+
+## 🏗️ Arquitetura Planejada
+
+```
+src/
+├── analyzer.py         # Orquestrador principal
+├── repository.py       # Gerenciamento de repositórios Git
+├── tree_builder.py     # Construção de árvore de diretórios
+├── file_reader.py      # Leitura e filtragem de arquivos
+├── indexer.py          # Geração de resumos via LLM
+├── llm_manager.py      # Gerenciamento do modelo LLM
+└── commands.py         # CLI commands
+```
+
+## 🚧 Funcionalidades Implementadas
+
+- ✅ Clone de repositórios Git
+- ✅ Geração de árvore de diretórios
+- ✅ Identificação de arquivos fonte
+- ✅ Carregamento de modelos LLM
+- ✅ Geração de resumos de arquivos
+- ❌ Detecção automática de padrões (não implementado)
+- ❌ Análise cruzada de padrões (não implementado)
+
+## 📋 Como Usar (Se Implementado)
 
 ```bash
-# Clone the repository
-git clone https://github.com/josiasdeveloper/software-engineering.git
-cd software-engineering/code-analysis
-
-# Install in editable mode
+# Instalação
 pip install -e .
-```
 
-## Usage in Google Colab
-
-### Option 1: Using the Notebook (Recommended)
-
-1. Download `colab_analysis.ipynb` from the repository
-2. Go to [Google Colab](https://colab.research.google.com/)
-3. File → Upload notebook → Select `colab_analysis.ipynb`
-4. Runtime → Change runtime type → **T4 GPU**
-5. Run all cells (or use Runtime → Run all)
-
-### Option 2: Manual Setup
-
-```python
-# Step 1: Check GPU
-!nvidia-smi
-
-# Step 2: Clone this repository
-!git clone https://github.com/your-username/code-analysis.git
-%cd code-analysis
-
-# Step 3: Install the package
-!pip install -e . -q
-
-# Step 4: Load model (IMPORTANT - do this once)
-!analyze load-model
-
-# Step 5: Clone target repository
-!analyze clone https://github.com/vanna-ai/vanna.git
-
-# Step 6: Generate summaries
-!analyze index
-
-# Step 6: View results
-import json
-with open('summaries.json', 'r') as f:
-    summaries = json.load(f)
-    
-print(f"Total files: {len(summaries)}")
-for path, summary in list(summaries.items())[:3]:
-    print(f"{path}: {summary}")
-
-# Step 7: Download results
-from google.colab import files
-files.download('summaries.json')
-```
-
-### Using a Different Model
-
-```bash
-# Set via environment variable
-export LLM_MODEL="microsoft/phi-2"
+# Carregar modelo (fazer uma vez)
 analyze load-model
 
-# Or pass directly
-analyze load-model --model microsoft/phi-2
+# Clonar e mapear repositório
+analyze clone https://github.com/vanna-ai/vanna.git
+
+# Gerar resumos de arquivos
+analyze index
+
+# Análise de padrões (não implementado)
+analyze patterns
 ```
 
-### Important: GPU Setup
-
-**You MUST enable GPU in Colab:**
-- Click "Runtime" → "Change runtime type"
-- Select "T4 GPU" as Hardware accelerator
-- Click "Save"
-
-## Local Usage
-
-```bash
-# Install the package
-make install
-
-# Analyze a repository
-make analyze URL=https://github.com/pallets/flask.git
-
-# Generate tree for local directory
-make tree DIR=./my-project
-
-# Run test analysis
-make test
-
-# Clean up
-make clean
-```
-
-### CLI Commands
-
-```bash
-# Full analysis
-analyze analyze <repository-url>
-
-# Keep repository after analysis
-analyze analyze --keep-repo <repository-url>
-
-# Generate tree only
-analyze tree <local-directory>
-
-# Show help
-analyze --help
-```
-
-## Supported Languages
-
-- Python (.py)
-- Java (.java)
-- JavaScript (.js)
-- TypeScript (.ts)
-- C/C++ (.c, .cpp, .h)
-- C# (.cs)
-- Go (.go)
-- Ruby (.rb)
-
-## Requirements
+## 🔧 Requisitos
 
 - Python 3.12+
-- GPU recommended (Google Colab T4 or better)
-- Internet connection for model download
+- GPU recomendada (Google Colab T4 ou melhor)
+- Conexão com internet para download de modelos
 
-## Limitations
+## 📝 Uso em Google Colab
 
-The analysis focuses on patterns detectable within single files or clear file interactions. Complex multi-file patterns may be harder to detect depending on the model's context window.
+Ver `COLAB_SETUP.md` para instruções detalhadas de setup em Colab.
 
+## 🎓 Lições Aprendidas
+
+Durante o desenvolvimento, aprendemos que:
+
+1. **Análise manual** oferece melhor qualidade para documentação acadêmica
+2. **Múltiplas estratégias** por padrão são essenciais para validação
+3. **Contexto específico** é mais importante que análise genérica
+4. **Validação cruzada** com múltiplos modelos aumenta confiabilidade
+
+Por isso, a análise do Vanna foi concluída usando `manual-analysis/` em vez desta ferramenta automatizada.
+
+## 📄 Licença
+
+MIT License - Veja LICENSE no diretório raiz.
