@@ -40,6 +40,7 @@ class ConversationStore(ABC):
 ```
 
 
+
 UserResolver é uma interface implementada como uma classe abstrata. Ela define o contrato para resolver o usuário, através do método abstrato. Esse método não é implementado na classe base, e qualquer classe que herde de UserResolver deve obrigatoriamente fornecer sua própria implementação.
 
 
@@ -156,3 +157,381 @@ class Agent:
         self.lifecycle_hooks = lifecycle_hooks
         # ...
 ```
+---
+## Padrão de Projeto Pipe-and-Filter
+
+O padrão Pipe-and-Filter é uma arquitetura onde o processamento de dados é dividido em uma sequência de etapas independentes (filtros), conectadas por canais (pipes). Cada filtro transforma os dados de entrada e envia o resultado para o próximo filtro na cadeia.
+
+**Objetivo:** Dividir o processamento em etapas bem definidas e independentes, facilitando a extensibilidade e a reutilização de componentes.
+
+---
+
+# Como o projeto Vanna utiliza o padrão Pipe-and-Filter
+
+Dentro do diretório `core/agent` e módulos relacionados ao Flask/FastAPI, é possível observar cadeias de chamadas de funções em que a saída de uma operação é passada diretamente como entrada para outra. Esse fluxo sequencial representa o padrão Pipe-and-Filter aplicado ao processamento de mensagens e respostas.
+
+O subsistema de **Content Filtering** (mostrado na Image 1) é uma evidência clara dessa aplicação: cada filtro (como validação de conteúdo, pré-processamento e análise semântica) atua como uma etapa independente que recebe dados e retorna resultados processados ao próximo filtro.
+
+**Arquivos relacionados:**  
+- `core/agent.py`  
+- `core/content_filtering.py`  
+- `server/api.py`
+
+  ```python
+class ContentFilterPipeline:
+    def __init__(self, filters):
+        # Lista de filtros aplicados em sequência
+        self.filters = filters
+
+    async def apply(self, content: str) -> str:
+        for filter_fn in self.filters:
+            content = await filter_fn(content)  # saída de um filter é entrada do próximo
+        return content
+```
+
+Cada filtro implementa uma interface ou método padronizado de transformação, garantindo que novos filtros possam ser adicionados sem alterar os existentes. Isso torna o pipeline modular e extensível.
+
+---
+
+## Padrão de Projeto Event-Driven
+
+O padrão Event-Driven baseia-se na ideia de que componentes se comunicam por meio de eventos. Um evento é emitido quando algo acontece, e outros componentes (listeners) reagem a ele.
+
+**Objetivo:** Desacoplar a emissão de eventos de seu processamento, permitindo sistemas reativos e assíncronos.
+
+---
+
+# Como o projeto Vanna utiliza o padrão Event-Driven
+
+No código relacionado a Flask/FastAPI, o endpoint `/api/vanna/v2/chat_sse` implementa o padrão Event-Driven por meio de **Server-Sent Events (SSE)** e streaming de respostas.
+
+O Vanna utiliza `StreamingResponse` (FastAPI) para enviar respostas em tempo real, evidenciando o padrão. A aplicação não espera o processamento completo para responder, mas envia eventos de atualização conforme o LLM gera a saída.
+
+**Arquivos relacionados:**  
+- `server/api.py`  
+- `server/fastapi_server.py`
+
+```python
+from fastapi import FastAPI, Request
+from fastapi.responses import StreamingResponse
+from core.agent import Agent
+
+app = FastAPI()
+agent = Agent(...)  # instanciado com suas dependências
+
+async def event_stream(message: str):
+    async for partial_response in agent.stream_message(message):
+        yield f"data: {partial_response}\n\n"
+
+@app.get("/api/vanna/v2/chat_sse")
+async def chat_sse(request: Request, message: str):
+    
+    Endpoint Event-Driven que envia respostas parciais via SSE.
+    Cada fragmento de resposta é um 'evento' enviado ao cliente.
+   
+    return StreamingResponse(event_stream(message), media_type="text/event-stream")
+```
+
+Esse comportamento confirma o uso de uma arquitetura orientada a eventos, especialmente útil em cenários de conversação contínua ou feedback incremental de LLMs.
+
+---
+
+## Padrão de Projeto Layered (Arquitetura em Camadas)
+
+O padrão Layered organiza o sistema em camadas lógicas, cada uma com uma responsabilidade distinta. As camadas superiores dependem apenas de interfaces fornecidas pelas camadas inferiores.
+
+**Objetivo:** Separar responsabilidades, facilitando manutenção, testes e substituição de componentes.
+
+---
+
+# Como o projeto Vanna utiliza o padrão Layered
+
+O Vanna apresenta uma clara separação entre suas camadas:
+
+- **Core:** contém a lógica central e classes fundamentais (Agent, LLM, Tools).  
+- **Infra:** contém implementações concretas de bancos de dados, vector stores e conectores externos.  
+- **Interface (UI/Server):** expõe o sistema por meio de APIs REST e SSE.
+
+**Arquivos relacionados:**  
+- `core/agent.py`  
+- `vectorstores/base.py`  
+- `databases/base.py`  
+- `server/api.py`
+
+```python
+# Core Layer - Agent
+class Agent:
+    def __init__(self, llm_service, tool_registry):
+        self.llm_service = llm_service        # Infra Layer
+        self.tool_registry = tool_registry    # Infra Layer
+
+    async def process_message(self, message: str):
+        # Core Layer: define o fluxo lógico
+        result = await self.llm_service.generate_response(message)
+        tool_result = await self.tool_registry.execute_tools(message)
+        return result, tool_result
+
+# Infra Layer - LLM service
+class LlmService:
+    async def generate_response(self, message: str):
+        # Comunicação com LLM externo
+        return f"LLM response to: {message}"
+
+# Infra Layer - Tool Registry
+class ToolRegistry:
+    async def execute_tools(self, message: str):
+        # Executa ferramentas externas ou internas
+        return f"Tools executed on: {message}"
+
+# API Layer - FastAPI
+from fastapi import FastAPI
+
+app = FastAPI()
+agent = Agent(LlmService(), ToolRegistry())
+
+@app.post("/process")
+async def process_endpoint(message: str):
+    return await agent.process_message(message)
+```
+
+Essa estrutura segue fielmente o princípio de camadas: a interface depende da camada de core, que por sua vez depende de abstrações na camada de infraestrutura.
+
+---
+
+## Padrão de Projeto Adapter
+
+O padrão Adapter converte a interface de uma classe em outra interface esperada pelo cliente. Ele permite que classes com interfaces incompatíveis trabalhem juntas.
+
+**Objetivo:** Adaptar componentes externos para que possam ser usados internamente de forma padronizada.
+
+---
+
+# Como o projeto Vanna utiliza o padrão Adapter
+
+As classes `llm_openai.py`, `llm_anthropic.py`, `databases/postgres.py`, `databases/snowflake.py`, `vectorstores/chroma.py` e `vectorstores/qdrant.py` funcionam como adaptadores. Elas traduzem APIs de terceiros (OpenAI, Anthropic, Postgres, Qdrant, etc.) para interfaces internas uniformes.
+
+**Arquivos relacionados:**  
+- `llm_openai.py`  
+- `llm_anthropic.py`  
+- `databases/postgres.py`  
+- `databases/snowflake.py`  
+- `vectorstores/chroma.py`  
+- `vectorstores/qdrant.py`
+
+
+
+```python
+from vanna.chromadb.chromadb_vector import ChromaDB_VectorStore
+from vanna.openai.openai_chat import OpenAI_Chat
+
+class MyVanna(ChromaDB_VectorStore, OpenAI_Chat):
+    def __init__(self, config=None):
+        ChromaDB_VectorStore.__init__(self, config=config)
+        OpenAI_Chat.__init__(self, config=config)
+
+vn = MyVanna(config={'api_key': 'sk-...', 'model': 'gpt-4‑...'})
+```
+
+
+Esses adaptadores isolam o core da dependência direta de SDKs externos, permitindo trocar provedores sem impactar o restante do sistema.
+
+---
+
+## Padrão de Projeto Template Method
+
+O padrão Template Method define o esqueleto de um algoritmo em uma operação, deixando que subclasses definam alguns de seus passos. Ele permite a reutilização do fluxo geral com personalização de partes específicas.
+
+**Objetivo:** Garantir consistência no fluxo principal e flexibilidade para extensões.
+
+---
+
+# Como o projeto Vanna utiliza o padrão Template Method
+
+Classes como `VannaBase` e `Agent` implementam o esqueleto dos processos de interação com o LLM. Cada etapa do pipeline — desde a entrada do usuário até a execução e formatação da resposta — segue um modelo definido, mas extensível.
+
+**Arquivos relacionados:**  
+- `core/base.py`  
+- `core/agent.py`
+- 
+```python
+from abc import ABC, abstractmethod
+
+class VannaBase(ABC):
+    def process_message(self, message: str):
+        self.pre_process(message)
+        result = self.execute(message)
+        self.post_process(result)
+        return result
+
+    @abstractmethod
+    def pre_process(self, message: str):
+        pass
+
+    @abstractmethod
+    def execute(self, message: str):
+        pass
+
+    @abstractmethod
+    def post_process(self, result):
+        pass
+
+class CustomAgent(VannaBase):
+    def pre_process(self, message: str):
+        print(f"Pré-processando: {message}")
+
+    def execute(self, message: str):
+        return message.upper()
+
+    def post_process(self, result):
+        print(f"Pós-processando: {result}")
+```
+
+Subclasses podem sobrescrever métodos específicos (como pré-processamento ou pós-processamento), mantendo o fluxo geral intacto.
+
+---
+
+## Padrão de Projeto Dependency Injection
+
+Dependency Injection é um padrão de design em que as dependências de uma classe são fornecidas externamente, e não criadas internamente. Isso reduz o acoplamento e facilita testes e manutenção.
+
+**Objetivo:** Tornar os componentes mais independentes e configuráveis.
+
+---
+
+# Como o projeto Vanna utiliza o padrão Dependency Injection
+
+A classe `Agent` é um exemplo claro de injeção de dependências. Ela recebe instâncias de `llm_service`, `vector_store`, `database` e outros componentes como parâmetros de seu construtor, em vez de criá-los internamente.
+
+**Arquivos relacionados:**  
+- `core/agent.py`  
+- `server/api.py`
+
+   recebe suas dependências (LLM, vector store, banco de dados, etc.) via injeção no construtor. Isso permite trocar implementações sem modificar a lógica interna do agente.
+
+```python
+class Agent:
+    def __init__(
+        self,
+        llm_service,         # LLM injetado
+        tool_registry,       # Registro de ferramentas
+        user_resolver,       # Estratégia de resolução de usuário
+        agent_memory,        # Memória do agente
+        conversation_store=None,
+        lifecycle_hooks=[]
+    ):
+        self.llm_service = llm_service
+        self.tool_registry = tool_registry
+        self.user_resolver = user_resolver
+        self.agent_memory = agent_memory
+        self.conversation_store = conversation_store
+        self.lifecycle_hooks = lifecycle_hooks
+
+# Exemplo de injeção de dependências
+from llm_openai import OpenAIService
+from vectorstores.chroma import ChromaVectorStore
+from databases.postgres import PostgresDB
+from user_resolvers.jwt_resolver import JWTUserResolver
+
+llm = OpenAIService(api_key="sk-...")
+vector_store = ChromaVectorStore()
+db = PostgresDB()
+user_resolver = JWTUserResolver()
+
+agent = Agent(
+    llm_service=llm,
+    tool_registry=[],
+    user_resolver=user_resolver,
+    agent_memory=db
+)
+```
+
+Essa abordagem permite substituir facilmente implementações (por exemplo, trocar o LLM de OpenAI para Anthropic) sem modificar o código do core.
+
+---
+
+## Padrão de Projeto Facade
+
+O padrão Facade fornece uma interface simplificada para um subsistema complexo, ocultando detalhes de implementação e expondo apenas operações essenciais.
+
+**Objetivo:** Reduzir a complexidade para o usuário final, oferecendo um ponto de acesso unificado.
+
+---
+
+# Como o projeto Vanna utiliza o padrão Facade
+
+Os módulos `server/api.py`, `server/fastapi_server.py` e `server/flask_server.py` atuam como fachadas. Eles expõem endpoints REST e SSE que encapsulam toda a lógica interna de comunicação com LLMs, bancos de dados e vector stores.
+
+**Arquivos relacionados:**  
+- `server/api.py`  
+- `server/fastapi_server.py`  
+- `server/flask_server.py`
+
+```python
+from fastapi import FastAPI
+from core.agent import Agent
+from core.llm_openai import OpenAIService
+from vectorstores.chroma import ChromaVectorStore
+
+app = FastAPI()
+
+# Criação do agente (dependências injetadas)
+llm = OpenAIService(api_key="sk-...")
+vector_store = ChromaVectorStore()
+agent = Agent(llm_service=llm, tool_registry=[], user_resolver=None, agent_memory=vector_store)
+
+# Endpoint simplificado (Facade)
+@app.post("/api/vanna/v2/chat")
+async def chat_endpoint(message: str):
+    response = agent.process_message(message)
+    return {"response": response}
+
+```
+
+
+Dessa forma, os clientes externos interagem com o Vanna por meio de uma interface REST simplificada, sem precisar conhecer a complexidade interna do sistema.
+
+---
+
+## Padrão de Projeto Policy/Guard
+
+O padrão Policy/Guard estabelece políticas de segurança e restrições de acesso antes de determinadas operações. Ele age como um “porteiro” que valida permissões e regras.
+
+**Objetivo:** Proteger o sistema contra acessos não autorizados e garantir conformidade com políticas de segurança.
+
+---
+
+# Como o projeto Vanna utiliza o padrão Policy/Guard
+
+O Vanna implementa políticas de segurança e autenticação através de verificação de JWT, controle de permissões e políticas de segurança em consultas SQL.
+
+**Arquivos relacionados:**  
+- `server/auth.py`  
+- `config/security.py`
+
+  ```python
+from fastapi import Request, HTTPException
+import jwt
+from config.security import SECRET_KEY
+
+# Guard / Policy para verificar autenticação JWT
+async def jwt_guard(request: Request):
+    token = request.headers.get("Authorization")
+    if not token:
+        raise HTTPException(status_code=401, detail="Token ausente")
+
+    try:
+        payload = jwt.decode(token.split(" ")[1], SECRET_KEY, algorithms=["HS256"])
+        user_id = payload.get("sub")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Token inválido")
+        request.state.user_id = user_id
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Token inválido")
+
+```
+
+Esses módulos funcionam como guardas que validam o usuário e verificam permissões antes de permitir operações críticas, como execução de consultas ou acesso a dados sensíveis.
+
+---
+
+Esses padrões, quando observados em conjunto, demonstram que o projeto Vanna AI segue princípios sólidos de engenharia de software, com modularidade, baixo acoplamento e alta coesão, garantindo extensibilidade e manutenção eficiente.
