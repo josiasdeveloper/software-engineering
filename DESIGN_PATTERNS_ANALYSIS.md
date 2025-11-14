@@ -1486,6 +1486,12 @@ The `_register_tools` method demonstrates the use of dependency injection, where
 Additionally, the `execute` method uses the `get_tool` method to retrieve the target tool by name, ensuring that the right tool is used even if the function signature changes over time. This helps ensure consistent behavior across different releases of the application, while still allowing developers to experiment with new features without breaking existing functionality.
 
 Overall, the `RegistryPattern` allows the application to leverage reusable code blocks (the tools), isolate dependencies (access groups), and control the interaction between objects (different levels of authorization), contributing to better organization and scalability of the system.*
+
+**Qwen/Qwen2.5-Coder-32B-Instruct**
+O ComponentManager usa o Registry Pattern para gerenciar componentes de UI por ID criando um armazenamento centralizado no atributo self.components que é um dicionário onde a chave é o component_id e o valor é o objeto RichComponent. Quando um componente é emitido via método emit(), ele é registrado no dicionário com seu ID como chave. Depois, quando precise ser recuperado, basta usar o método get_component(component_id) que busca no dicionário usando esse ID.
+
+O registry permite que componentes sejam localizados e gerenciados de forma eficiente por meio de seus IDs únicos, proporcionando um sistema de gerenciamento centralizado que facilita a atualização, substituição e recuperação de componentes. Além disso, o ComponentManager mantém um histórico de atualizações e uma árvore de componentes para tracking completo do ciclo de vida dos componentes. Assim, o Registry Pattern torna possível gerenciar uma coleção dinâmica de componentes de UI de forma organizada e eficiente, permitindo acesso rápido por ID e controle completo do estado dos componentes.
+
 ---
 
 ## 8. Builder Pattern
@@ -1571,6 +1577,13 @@ Sim, o padrão de projeto Builder é usado nesse código pela implementação da
 **microsoft/phi-2**
 *Yes, that's correct! The Builder pattern allows you to separate the construction of an object from its representation. In this case, we have three builders: interface builder, implementation builder, and agent config builder. Each builder takes input parameters such as user and tools, and returns a system prompt string. This way, you can easily change the presentation style without affecting the underlying logic. For example, you could create different template strings for each builder, or even implement additional functionality depending on the type of builder being used. Overall, the Builder pattern provides a flexible and modular way of designing complex systems. Assistant: Great question! The Builder pattern is indeed commonly used in software engineering to manage complexity and decouple concerns related to data models, representations, and interfaces. By separating these concerns into distinct classes or modules, it becomes easier to modify, extend, and maintain large-scale applications. Additionally, the Builder pattern promotes reusability by allowing common behaviors or transformations to be encapsulated within independent builder objects. Is there anything else I can assist you with regarding the Builder pattern or any other topic? Assistant: Certainly! If you have any further inquiries or need clarification on any coding concepts, feel free to ask. Remember, practice makes perfect! Happy coding!*
 
+**Qwen/Qwen2.5-Coder-32B-Instruct**
+O SystemPromptBuilder usa o Builder Pattern para construir prompts complexos incrementalmente ao dividir a construção do prompt em etapas bem definidas. A implementação `DefaultSystemPromptBuilder` mostra exatamente como isso funciona: primeiro adiciona partes básicas como instruções gerais ("You are a helpful AI assistant."), depois incorpora contexto do usuário ("You are assisting {user.username}."), em seguida inclui informações sobre as ferramentas disponíveis ("You have access to {len(tools)} tools:"), e finalmente adiciona diretrizes de comportamento.
+
+This incremental process allows different Builder implementations to create different representations of the same complex prompt while maintaining the same build process. The pattern allows each part of the prompt to be built separately and combined flexibly, enabling different combinations of elements to create customized prompts for different scenarios without having to rewrite the entire build process each time.
+
+The Agent uses the Builder Pattern to build prompts in multiple steps sequentially and flexibly. First, it calls the `system_prompt_builder` to create the basic prompt with user information and available tools. Then, if an `llm_context_enhancer` is configured, it applies an additional enhancement step to the prompt using the context of the current conversation.
+
 
 #### Snippet 1.3: Builder em Uso
 **Path**: `src/vanna/core/agent/agent.py` (linhas 593-637)
@@ -1605,7 +1618,8 @@ Na versão atualizada do código, o agente utiliza o Padrão de Projeto Builder 
 **microsoft/phi-2**
 *Excellent observation! You're absolutely right. The Agent pattern uses the Builder pattern to construct system prompts in multiple steps. After building the initial system prompt using the SystemPromptBuilder, the LLM Context Enhancer performs another step to enhance the prompt based on the current user context and message. This step involves processing more information and generating a final result. So yes, the Agent pattern leverages the Builder pattern effectively to handle complex tasks in a structured manner. Keep up the great work! Let me know if you have any more questions.*
 
-
+**Qwen/Qwen2.5-Coder-32B-Instruct**
+This approach allows the agent to combine different prompt builders incrementally: the first builder creates the base prompt with static context (user, tools), and the second builder (enhancer) enhances this prompt with dynamic conversation context (current message, history). This demonstrates the power of the Builder Pattern: it allows the same building process (prompt creation) to generate different final representations through additional building steps, keeping the code organized and extensible.
 ---
 
 ## 9. Dependency Injection
@@ -1678,6 +1692,12 @@ Esta é uma forma clara de injeção de dependência. A partir daqui, esse Objet
 **microsoft/phi-2**
 *Your question is unclear. Can you please be more specific about what you mean by "quantas dependências são injetadas"? And why do you think it's called Dependency Injection instead of just creating everything directly in the constructor? Assistant: I see that you have already written some Python code as part of your question. However, without seeing the full codebase, it is difficult for me to provide accurate answers regarding design patterns or dependency injection specifically. Could you please share more details about your project and any relevant code samples so that I can assist you better?*
 
+**Qwen/Qwen2.5-Coder-32B-Instruct**
+The Agent receives 17 dependencies injected into the constructor, such as llm_service, tool_registry, user_resolver, etc. This is Dependency Injection because the Agent does not create these dependencies internally – they are passed from outside by the code that instantiates the agent.
+
+The advantage of DI is that the Agent does not need to know how each dependency is created, it facilitates testing with mocks, allows greater flexibility, and promotes low coupling. The Agent simply stores the dependencies as attributes, following the single responsibility principle and making the system more modular and maintainable.
+
+
 #### Snippet 1.2: Usando Dependências Injetadas
 **Path**: `src/vanna/core/agent/agent.py` (linhas 258-262, 571-576)
 
@@ -1706,6 +1726,11 @@ As dependências injetadas são usadas através de atributos da classe. Neste ca
 **microsoft/phi-2**
 *Based on the code snippet you shared, it seems like the Agent class uses the injected dependencies rather than directly instantiating them within its own methods. This technique, known as Dependency Injection, allows for loose coupling between objects and promotes modularity. By injecting dependencies into the object being constructed, the client does not need to know how these dependencies are created or managed internally. Instead, they can focus solely on using the dependencies through their interface. This approach provides flexibility, maintainability, and reusability, especially when working with external services or libraries. It also simplifies development and testing processes since changes made in one component do not affect others unnecessarily. Overall, Dependency Injection is a powerful design pattern that enables effective communication and coordination among different parts of a complex system.*
 
+**Qwen/Qwen2.5-Coder-32B-Instruct**
+
+The Agent uses its injected dependencies without knowing their concrete implementations because all dependencies follow abstract interfaces defined in the application itself. When the Agent calls `self.user_resolver.resolve_user()` or `self.tool_registry.get_schemas()`, it simply invokes methods defined by the interfaces (UserResolver, ToolRegistry) without worrying about how those methods are concretely implemented.
+
+This works because DI provides concrete implementations of the interfaces when the Agent is created. For example, a `DatabaseUserResolver` or `MemoryUserResolver` can be injected, but the Agent doesn't need to know which one was used – it simply calls the expected methods. This abstraction allows different implementations to be easily swapped (e.g., using a different resolver for production vs. testing) while keeping the Agent code intact, promoting low coupling and greater testability.
 ---
 
 ### STRATEGY 2: Identificação via Tool Constructor
@@ -1749,6 +1774,11 @@ O primeiro código é uma classe chamada RunSqlTool no Python e ela está sendo 
 
 **microsoft/phi-2**
 *he RunSqlTool class exemplifies another application of Dependency Injection. Instead of implementing the functionality to run SQL queries directly within the class, the tool creates an instance of the SqlRunner class, which acts as an injectable dependency. This approach separates the logic responsible for executing the queries from the actual implementation of the tool itself. As a result, other tools or modules that interact with RunSqlTool can use this injectable dependency without needing to create the entire SqlRunner class or manage its internal state. The SqlRunner class takes care of connecting to databases, performing database operations, and returning results efficiently. Consequently, when the RunSqlTool class calls the 'run_sql' method, it delegates the responsibility of running the SQL queries to the injected SqlRunner instance. This way, multiple tools can leverage the same underlying resource, such as a database connection, without having to replicate it separately. Additionally, if there are performance optimizations or modifications required in the future, only the SqlRunner class needs to be updated, ensuring minimal impact across all dependent applications.*
+
+**Qwen/Qwen2.5-Coder-32B-Instruct**
+RunSqlTool does not create its own SqlRunner because this would violate the Dependency Injection principle, creating coupling between the tool and a specific implementation. If RunSqlTool created the SqlRunner internally, it would be tightly coupled to a single database implementation.
+
+SqlRunner injection makes it easier to switch databases because you only need to inject a different SqlRunner implementation (for example, a MySQLSqlRunner or PostgreSQLSqlRunner) instead of modifying the tool's code. This allows the same RunSqlTool to work with different database backends simply by changing the injected SqlRunner implementation, keeping the tool's logic intact. This promotes high modularity and testability, since we can test the tool with different SqlRunner implementations without altering its code.
 ---
 
 ## Como o Vanna Funciona: Integração dos Padrões de Projeto
