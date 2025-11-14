@@ -150,12 +150,12 @@ A ordem dos middlewares importa—eles são executados sequencialmente na ordem 
 | **Chain of Responsibility** | 5.1.a, 5.1.b, 5.2.a | ✅ Completo | ✅ Completo | ✅ Completo | Alta |
 | **Observer** | 6.1.a, 6.1.b, 6.1.c | ✅ Completo | ⚠️ Parcialmente relevante | ✅ Completo e preciso | Alta |
 | **Registry** | 7.1.a, 7.1.b, 7.2.a | ✅ Completo | ⚠️ Confuso (menciona GoF incorretamente) | ✅ Completo e preciso | Média-Alta |
-| **Builder** | 8.1.a, 8.1.b | ✅ Completo | ⚠️ Verboso mas correto | ❌ Ausente | Média |
-| **Dependency Injection** | 9.1.a, 9.1.b, 9.2.a | ✅ Completo | ⚠️ Parcialmente relevante | ❌ Ausente | Média |
-| **Plugin Architecture** | 11.1.a, 11.1.b, 11.1.c | ❌ Ausente | ⚠️ Parcialmente relevante | ❌ Ausente | Baixa |
-| **Layered Architecture** | 12.1.a | ❌ Ausente | ✅ Completo (verboso) | ❌ Ausente | Baixa |
-| **Event-Driven** | 13.1.a, 13.1.b | ❌ Ausente | ✅ Completo | ❌ Ausente | Baixa |
-| **Pipeline Architecture** | 14.1.a, 14.1.b | ❌ Ausente | ✅ Completo | ❌ Ausente | Baixa |
+| **Builder** | 8.1.a, 8.1.b | ✅ Completo | ⚠️ Verboso mas correto | ✅ Completo | Média |
+| **Dependency Injection** | 9.1.a, 9.1.b, 9.2.a | ✅ Completo | ⚠️ Parcialmente relevante | ✅ Completo| Alta |
+| **Plugin Architecture** | 11.1.a, 11.1.b, 11.1.c | ❌ Ausente | ⚠️ Parcialmente relevante | ✅ Completo | Alta |
+| **Layered Architecture** | 12.1.a | ❌ Ausente | ✅ Completo (verboso) | ✅ Completo | Alta |
+| **Event-Driven** | 13.1.a, 13.1.b | ❌ Ausente | ✅ Completo | ✅ Completo | Alta |
+| **Pipeline Architecture** | 14.1.a, 14.1.b | ❌ Ausente | ✅ Completo | ✅ Completo| Alta |
 
 **Legenda:**
 - ✅ Completo: Resposta presente, relevante e precisa
