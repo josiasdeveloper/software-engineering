@@ -85,7 +85,7 @@ Durante o desenvolvimento, aprendemos que:
 3. **Contexto específico** é mais importante que análise genérica
 4. **Validação cruzada** com múltiplos modelos aumenta confiabilidade
 
-Por isso, a análise do Vanna foi concluída usando `manual-analysis/` em vez desta ferramenta automatizada.
+A análise do Vanna foi concluída usando `manual-analysis/`
 
 ## 📄 Licença
 

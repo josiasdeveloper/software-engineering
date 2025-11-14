@@ -14,25 +14,22 @@ O objetivo deste projeto é identificar e documentar os padrões de projeto (Gan
 
 ```
 .
-├── DESIGN_PATTERNS_INSUMOS.md      # Snippets, perguntas e respostas (referência)
-├── DESIGN_PATTERNS_CONCLUSOES.md   # Análise e conclusões (leitura principal)
-├── DESIGN_PATTERNS_ANALYSIS.md     # Documento original completo
-├── RELATORIO_PERGUNTAS_INCOMPLETAS.md  # Status de respostas faltantes
+├── documentation/
+│   ├── DESIGN_PATTERNS_INSUMOS.md      # Snippets, perguntas e respostas (referência)
+│   ├── DESIGN_PATTERNS_CONCLUSOES.md   # Análise e conclusões (DOCUMENTO PRINCIPAL)
+│   ├── microsoft_phi.md
+│   └── Qwen3-Coder-30B-A3B-Instruct.md
 │
 ├── manual-analysis/                # Ferramenta CLI interativa (usada para gerar outputs)
 │   └── README.md                   # Documentação da ferramenta
 │
-├── code-analysis/                  # ⚠️ WORK IN PROGRESS - Análise automatizada
-│   └── README.md                   # Status e motivações
-│
-└── documentation/                  # Documentação e outputs dos modelos
-    ├── microsoft_phi.md
-    └── Qwen3-Coder-30B-A3B-Instruct.md
+└── code-analysis/                  # ⚠️ WORK IN PROGRESS - Análise automatizada
+    └── README.md                   # Status e motivações
 ```
 
 ## 📖 Documentos Principais
 
-### `DESIGN_PATTERNS_CONCLUSOES.md`
+### `documentation/DESIGN_PATTERNS_CONCLUSOES.md`
 **Documento principal para leitura.** Contém:
 - Análise em prosa de cada padrão identificado
 - Explicação de como e por que cada padrão é usado no Vanna
@@ -40,15 +37,12 @@ O objetivo deste projeto é identificar e documentar os padrões de projeto (Gan
 - Tabela comparativa da qualidade das respostas das IAs
 - Análise qualitativa dos modelos
 
-### `DESIGN_PATTERNS_INSUMOS.md`
+### `documentation/DESIGN_PATTERNS_INSUMOS.md`
 **Documento de referência técnica.** Contém:
 - Todos os snippets de código organizados
 - Perguntas feitas aos modelos
 - Respostas completas dos três modelos
 - Sistema de índices `X.Y.z` para referência cruzada
-
-### `DESIGN_PATTERNS_ANALYSIS.md`
-Documento original completo com toda a análise detalhada.
 
 ## 🎯 Padrões Identificados
 
