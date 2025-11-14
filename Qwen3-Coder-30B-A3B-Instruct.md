@@ -192,3 +192,48 @@ O registry permite que componentes sejam localizados e gerenciados de forma efic
 
 8. Builder Pattern
 
+Como SystemPromptBuilder usa Builder Pattern para construir prompts complexos incrementalmente?
+
+
+O SystemPromptBuilder usa o Builder Pattern para construir prompts complexos incrementalmente ao dividir a construção do prompt em etapas bem definidas. A implementação `DefaultSystemPromptBuilder` mostra exatamente como isso funciona: primeiro adiciona partes básicas como instruções gerais ("You are a helpful AI assistant."), depois incorpora contexto do usuário ("You are assisting {user.username}."), em seguida inclui informações sobre as ferramentas disponíveis ("You have access to {len(tools)} tools:"), e finalmente adiciona diretrizes de comportamento.
+
+This incremental process allows different Builder implementations to create different representations of the same complex prompt while maintaining the same build process. The pattern allows each part of the prompt to be built separately and combined flexibly, enabling different combinations of elements to create customized prompts for different scenarios without having to rewrite the entire build process each time.
+
+The Agent uses the Builder Pattern to build prompts in multiple steps sequentially and flexibly. First, it calls the `system_prompt_builder` to create the basic prompt with user information and available tools. Then, if an `llm_context_enhancer` is configured, it applies an additional enhancement step to the prompt using the context of the current conversation.
+
+
+Como o Agent usa o Builder Pattern para construir prompts em múltiplas etapas?"
+
+
+This approach allows the agent to combine different prompt builders incrementally: the first builder creates the base prompt with static context (user, tools), and the second builder (enhancer) enhances this prompt with dynamic conversation context (current message, history). This demonstrates the power of the Builder Pattern: it allows the same building process (prompt creation) to generate different final representations through additional building steps, keeping the code organized and extensible.
+
+9. Dependency Injection
+STRATEGY 1: Identificação via Agent Constructor
+
+Snippet 1.1: Agent Constructor (DI Container)
+
+
+"Quantas dependências são injetadas no Agent?"
+"Por que isso é Dependency Injection e não criação direta?"
+
+
+
+The Agent receives 17 dependencies injected into the constructor, such as llm_service, tool_registry, user_resolver, etc. This is Dependency Injection because the Agent does not create these dependencies internally – they are passed from outside by the code that instantiates the agent.
+
+The advantage of DI is that the Agent does not need to know how each dependency is created, it facilitates testing with mocks, allows greater flexibility, and promotes low coupling. The Agent simply stores the dependencies as attributes, following the single responsibility principle and making the system more modular and maintainable.
+
+Snippet 1.2: Usando Dependências Injetadas
+
+The Agent uses its injected dependencies without knowing their concrete implementations because all dependencies follow abstract interfaces defined in the application itself. When the Agent calls `self.user_resolver.resolve_user()` or `self.tool_registry.get_schemas()`, it simply invokes methods defined by the interfaces (UserResolver, ToolRegistry) without worrying about how those methods are concretely implemented.
+
+This works because DI provides concrete implementations of the interfaces when the Agent is created. For example, a `DatabaseUserResolver` or `MemoryUserResolver` can be injected, but the Agent doesn't need to know which one was used – it simply calls the expected methods. This abstraction allows different implementations to be easily swapped (e.g., using a different resolver for production vs. testing) while keeping the Agent code intact, promoting low coupling and greater testability.
+
+
+STRATEGY 2: Identificação via Tool Constructor
+
+
+Snippet 2.1: RunSqlTool com DI
+
+RunSqlTool does not create its own SqlRunner because this would violate the Dependency Injection principle, creating coupling between the tool and a specific implementation. If RunSqlTool created the SqlRunner internally, it would be tightly coupled to a single database implementation.
+
+SqlRunner injection makes it easier to switch databases because you only need to inject a different SqlRunner implementation (for example, a MySQLSqlRunner or PostgreSQLSqlRunner) instead of modifying the tool's code. This allows the same RunSqlTool to work with different database backends simply by changing the injected SqlRunner implementation, keeping the tool's logic intact. This promotes high modularity and testability, since we can test the tool with different SqlRunner implementations without altering its code.
